@@ -1,0 +1,8 @@
+.cache/
+.claude/
+.codex/
+.copilot/
+*.o
+*.elf
+*.d
+*.a
