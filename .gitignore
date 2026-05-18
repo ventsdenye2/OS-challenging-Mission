@@ -6,3 +6,4 @@
 *.elf
 *.d
 *.a
+.agents
