@@ -594,6 +594,8 @@ bnez $t0, slave_uboot
   # ...
 ```
 
+本仓库当前阶段实现中，从核汇编路径最终跳转到 `smp_secondary_start`，`slave_uboot` 可理解为从核启动入口的示例名称。
+
 对于从核来说，你需要完成以下内容:
 
 - 完成`slave_uboot`代码，作用是初始化从核，关闭相关的中断
@@ -624,10 +626,10 @@ wait
 参考MOS的Makefile文件，修改QEMU启动参数以支持多核启动:
 
 ```makefile
-QEMU_FLAGS := -smp 2 -machine malta -M 64 -cpu r24k
+QEMU_FLAGS := -smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot
 ```
 
-上述启动参数将核心数通过`-smp`设置为2，并将所使用处理器通过CPU设置为了`r24k`。
+上述启动参数将核心数通过`-smp`设置为2，并将所使用处理器通过CPU设置为 QEMU 支持的 `24Kc`。部分 QEMU 版本不提供 `r24k` 这个 CPU 型号名，可用 `qemu-system-mipsel -cpu help` 检查本机支持的名称。
 
 ### 字符输出
 
@@ -635,7 +637,7 @@ MOS中提供了使用`NS16550A`串口输入输出字符的方式，请参考该�
 
 ### 功能验证
 
-你可以通过读取`PRId` CP0协处理器来得到当前启动核心ID，并通过在**字符输出**一节中实现的`printk`进行输出，如果成功则表示实现正确。
+你可以通过读取 CP0 `EBase` 低位等 QEMU/Malta 可用来源来得到当前启动核心ID，并通过在**字符输出**一节中实现的`printk`进行输出，如果成功则表示实现正确。`PRId` 更适合识别处理器型号，不同 QEMU/CPU 配置下未必能区分核心编号。
 
 在本次挑战性任务中，我们要求对`printk`函数进行修改，在每次打印前**输出当前进程所在的cpu processor id**，即：
 

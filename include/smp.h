@@ -2,10 +2,18 @@
 #define _SMP_H_
 
 #include <mmu.h>
-#include <types.h>
 
 /* 当前 SMP 移植阶段默认支持的 CPU 数量，后续可扩展。 */
 #define NR_CPUS 2
+
+/* 每个 CPU 暂时预留的启动/内核栈大小。 */
+#define SMP_KSTACK_SIZE (4 * PAGE_SIZE)
+#define SMP_BOOT_WAIT 0x534d5030
+#define SMP_BOOT_READY 0x534d5031
+
+#ifndef __ASSEMBLER__
+
+#include <types.h>
 
 /* Env 在 env.h 中定义，这里只需要指针类型，避免头文件互相包含。 */
 struct Env;
@@ -20,8 +28,10 @@ struct cpu_local_data {
 
 /* 所有 CPU 的 per-cpu 状态表。 */
 extern struct cpu_local_data cpu_data[NR_CPUS];
+extern u_char smp_kernel_stacks[NR_CPUS][SMP_KSTACK_SIZE];
+extern volatile int smp_boot_ready;
 
-/* 返回当前 CPU 编号；阶段 1 暂时固定返回 0。 */
+/* 返回当前 CPU 编号。 */
 int cpu_id(void);
 /* 返回当前 CPU 的 curenv。 */
 struct Env *cpu_curenv(void);
@@ -36,5 +46,7 @@ void smp_secondary_start(void);
 void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1);
 /* IPI 中断处理入口；阶段 1 保留为空实现。 */
 void handle_ipi_irq(void);
+
+#endif
 
 #endif

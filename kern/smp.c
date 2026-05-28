@@ -1,12 +1,21 @@
 #include <mmu.h>
+#include <printk.h>
 #include <smp.h>
 
-/* 全局 per-cpu 数据表，阶段 1 先只服务单核兼容路径。 */
+/* 全局 per-cpu 数据表。 */
 struct cpu_local_data cpu_data[NR_CPUS];
+u_char smp_kernel_stacks[NR_CPUS][SMP_KSTACK_SIZE] __attribute__((aligned(8)));
+volatile int smp_boot_ready = SMP_BOOT_WAIT;
 
 int cpu_id(void) {
-	/* 阶段 1 尚未接入真实 CPU 编号读取，保持旧单核路径。 */
-	return 0;
+	u_int ebase;
+
+	__asm__ volatile("mfc0 %0, $15, 1" : "=r"(ebase));
+	ebase &= 0x3ff;
+	if (ebase >= NR_CPUS) {
+		return 0;
+	}
+	return ebase;
 }
 
 struct Env *cpu_curenv(void) {
@@ -25,12 +34,23 @@ void smp_init(void) {
 		cpu_data[i].cpu_id = i;
 		cpu_data[i].curenv = 0;
 		cpu_data[i].cur_pgdir = 0;
-		cpu_data[i].kernel_stack_top = KSTACKTOP;
+		if (i == 0) {
+			cpu_data[i].kernel_stack_top = KSTACKTOP;
+		} else {
+			cpu_data[i].kernel_stack_top = (u_long)&smp_kernel_stacks[i][SMP_KSTACK_SIZE];
+		}
 	}
+	__asm__ volatile("sync" ::: "memory");
+	smp_boot_ready = SMP_BOOT_READY;
+	__asm__ volatile("sync" ::: "memory");
 }
 
 void smp_secondary_start(void) {
-	/* 阶段 2 接入从核启动流程。 */
+	printk("slave online\n");
+	printk("wait for start\n");
+	while (1) {
+		__asm__ volatile("nop");
+	}
 }
 
 void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1) {

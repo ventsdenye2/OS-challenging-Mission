@@ -35,10 +35,10 @@ objects                 := $(addsuffix /*.o, $(modules)) $(addsuffix /*.x, $(use
 modules                 += $(user_modules)
 
 CFLAGS                  += -DLAB=$(shell echo $(lab) | cut -f1 -d_)
-QEMU_FLAGS              += -cpu 4Kc -m 64 -nographic -M malta \
-						$(shell [ -f '$(user_disk)' ] && echo '-drive id=ide0,file=$(user_disk),if=ide,format=raw') \
-						$(shell [ -f '$(empty_disk)' ] && echo '-drive id=ide1,file=$(empty_disk),if=ide,format=raw') \
-						-no-reboot
+QEMU_FLAGS              += -smp 2 -cpu 24Kc -m 64 -nographic -M malta \
+							$(shell [ -f '$(user_disk)' ] && echo '-drive id=ide0,file=$(user_disk),if=ide,format=raw') \
+							$(shell [ -f '$(empty_disk)' ] && echo '-drive id=ide1,file=$(empty_disk),if=ide,format=raw') \
+							-no-reboot
 
 .PHONY: all test tools $(modules) clean run dbg_run dbg_pts dbg objdump fs-image clean-and-all connect
 

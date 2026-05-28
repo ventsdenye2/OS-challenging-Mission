@@ -1,6 +1,10 @@
 #include <print.h>
 #include <printk.h>
+#include <smp.h>
+#include <spinlock.h>
 #include <trap.h>
+
+static spinlock_t console_lock = SPINLOCK_INIT;
 
 /* Lab 1 Key Code "outputk" */
 void outputk(void *data, const char *buf, size_t len) {
@@ -10,12 +14,40 @@ void outputk(void *data, const char *buf, size_t len) {
 }
 /* End of Key Code "outputk" */
 
+static void output_uint(u_int value) {
+	char buf[10];
+	int i = 0;
+
+	if (value == 0) {
+		printcharc('0');
+		return;
+	}
+	while (value > 0) {
+		buf[i++] = '0' + value % 10;
+		value /= 10;
+	}
+	while (i > 0) {
+		printcharc(buf[--i]);
+	}
+}
+
+static void output_cpu_prefix(void) {
+	printcharc('[');
+	output_uint(cpu_id());
+	printcharc(']');
+	printcharc(' ');
+}
+
 /* Lab 1 Key Code "printk" */
 void printk(const char *fmt, ...) {
 	va_list ap;
+
+	spin_lock(&console_lock);
+	output_cpu_prefix();
 	va_start(ap, fmt);
 	vprintfmt(outputk, NULL, fmt, ap);
 	va_end(ap);
+	spin_unlock(&console_lock);
 }
 /* End of Key Code "printk" */
 

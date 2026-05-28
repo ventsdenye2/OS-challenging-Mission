@@ -140,20 +140,23 @@ make test lab=6_2
 杨璞负责：
 
 1. 修改 `Makefile`：
-   - `QEMU_FLAGS` 改为包含 `-smp 2 -cpu r24k -m 64 -nographic -M malta -no-reboot`
+   - `QEMU_FLAGS` 改为包含 `-smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot`
+   - 本地 QEMU 的 CPU 列表中没有 `r24k`，实际可用型号为 `24Kc`。
    - 保留磁盘 `-drive` 逻辑。
 2. 修改 `include.mk`：
    - 将 `-march=4kc` 调整为适合 R24K 的参数，如工具链支持则使用 `-march=24kc`；若不支持，先保留并记录。
 3. 修改 `init/start.S`：
-   - 读取 CP0 `EBase` 或 QEMU/Malta 可用 CPU 编号来源。
+   - 读取 CP0 `EBase` 低位作为 QEMU/Malta CPU 编号来源。
    - CPU0 执行 `.bss` 清零、设置 CPU0 栈、跳转 `mips_init`。
-   - 非 0 CPU 跳转 `slave_uboot`，设置独立栈或等待 IPI 提供栈。
+   - 非 0 CPU 不清 `.bss`，先等待 `smp_boot_ready == SMP_BOOT_READY`，再设置独立静态栈并跳转 `smp_secondary_start`。
 4. 在 `kern/smp.c` 初始化：
    - `cpu_data[0].cpu_id = 0`
    - `cpu_data[1].cpu_id = 1`
-   - 每核 `kernel_stack_top`
+   - CPU0 的 `kernel_stack_top = KSTACKTOP`
+   - CPU1 的 `kernel_stack_top = &smp_kernel_stacks[1][SMP_KSTACK_SIZE]`
    - 每核 `curenv = NULL`
    - 每核 `cur_pgdir = NULL`
+   - 使用 `.data` 中的 `smp_boot_ready` 魔数作为 CPU1 等待 CPU0 清完 `.bss` 和初始化 per-cpu 数据的启动栅栏。
 5. 修改 `kern/printk.c`：
    - 给串口输出加 `console_lock`。
    - 每条 `printk` 前输出 `[cpu]` 前缀。
@@ -192,6 +195,13 @@ void smp_boot_check(void) {
 - 2 核 QEMU 不死机。
 - CPU0 可以正常走到原来的 `mips_init`。
 - CPU1 至少能进入可控等待路径。
+- 当前阶段实际输出示例：
+
+```text
+[1] slave online
+[1] wait for start
+[0] init.c:	mips_init() is called
+```
 
 ### 阶段 3：IPI 与异常中断接入
 
@@ -276,7 +286,7 @@ make run
 2. 修改 `include/stackframe.h`：
    - `SAVE_ALL` 从用户态进入内核时，使用当前 CPU 的内核栈顶，而不是固定 `KSTACKTOP`。
    - 可通过 `$gp` 指向每核数据，或调用/内联 `cpu_id` 后计算栈顶。
-3. 保证 `slave_uboot` 设置好 `$gp` 或等价的每核指针。
+3. 保证从核启动入口（当前实现为 `smp_secondary_start`，若后续拆出 `slave_uboot` 汇编入口则同步处理）设置好 `$gp` 或等价的每核指针。
 
 李昊泽负责：
 
@@ -516,18 +526,18 @@ make test lab=6_2
 ### 构建与运行
 
 - `Makefile`
-  - `QEMU_FLAGS`: 加 `-smp 2`，CPU 改 R24K。
+  - `QEMU_FLAGS`: 加 `-smp 2`，CPU 改为 QEMU 支持的 `24Kc`。
   - 保留磁盘镜像参数。
 - `include.mk`
-  - 检查 `-march` 与 R24K 是否兼容。
+  - 使用 `-march=24kc`。
 
 ### 启动
 
 - `init/start.S`
-  - 区分 CPU0 和 CPU1。
+  - 用 CP0 `EBase` 低位区分 CPU0 和 CPU1。
   - 只有 CPU0 清 `.bss`。
-  - 每核设置独立栈。
-  - 非 0 CPU 进入 `slave_uboot`。
+  - CPU0 调用 `smp_init` 后进入 `mips_init`。
+  - 非 0 CPU 等待 `smp_boot_ready`，设置独立静态栈后进入 `smp_secondary_start`。
 
 ### SMP/IPI
 
@@ -620,7 +630,7 @@ make test lab=6_2
 
 最终交付至少满足：
 
-1. QEMU 使用 2 个 R24K CPU 启动。
+1. QEMU 使用 2 个 `24Kc` CPU 启动。
 2. 两个 CPU 都能进入内核并打印带 CPU id 的日志。
 3. IPI 可用，CPU0 能向 CPU1 发送启动和函数调用消息。
 4. timer interrupt 在两个 CPU 上可用。
@@ -635,7 +645,7 @@ make test lab=6_2
 建议按阶段拆提交，便于回退和查错：
 
 1. `smp: add common cpu-local and spinlock interfaces`
-2. `smp: boot qemu with two r24k cpus`
+2. `smp: boot qemu with two 24Kc cpus`
 3. `smp: bring up secondary cpu with ipi`
 4. `trap: use per-cpu kernel stacks`
 5. `env: switch curenv and cur_pgdir to per-cpu state`
