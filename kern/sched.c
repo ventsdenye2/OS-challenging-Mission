@@ -2,6 +2,12 @@
 #include <pmap.h>
 #include <printk.h>
 
+/* TODO SMP phase 6:
+ * - 'static int count' 改为每核 cpu_data[cpu_id()].sched_count。
+ * - env_sched_list 遍历需持 env_sched_lock。
+ * - 跳过 env_running == 1 且 env_cpu_id != cpu_id() 的 env。
+ * - 选中后设置 env_running = 1、env_cpu_id = cpu_id()。 */
+
 /* Overview:
  *   Implement a round-robin scheduling to select a runnable env and schedule it using 'env_run'.
  *
@@ -16,6 +22,7 @@
  */
 void schedule(int yield) {
 	static int count = 0; // remaining time slices of current env
+	/* TODO SMP phase 6: curenv 改为 cpu_curenv()。 */
 	struct Env *e = curenv;
 
 	/* We always decrease the 'count' by 1.

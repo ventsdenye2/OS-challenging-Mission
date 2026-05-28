@@ -39,6 +39,12 @@ struct Env {
 
 	// Lab 6 scheduler counts
 	u_int env_runs; // number of times we've been env_run'ed
+
+	/* TODO SMP phase 4: 增加以下字段支持多核调度。
+	 *   int env_cpu_id;       // 当前运行该 env 的 CPU 编号
+	 *   int env_running;      // 是否正在某个 CPU 上运行（防止双重调度）
+	 * TODO SMP phase 7: 增加以下字段支持 CPU 绑定。
+	 *   int env_pinned_cpu;   // -1 表示不绑定，>=0 表示绑定到指定 CPU */
 };
 
 LIST_HEAD(Env_list, Env);

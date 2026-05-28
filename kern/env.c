@@ -14,6 +14,11 @@ static struct Env_list env_free_list; // Free list
 // Invariant: 'env' in 'env_sched_list' iff. 'env->env_status' is 'RUNNABLE'.
 struct Env_sched_list env_sched_list; // Runnable list
 
+/* TODO SMP phase 4: 替换全局 curenv 为每核 cpu_data[cpu_id()].curenv。
+ * 所有直接读写 curenv 的地方（envid2env, env_free, env_destroy, env_run, env_check）
+ * 需要改为通过 cpu_curenv() 访问。
+ * 同时需要增加 env_sched_lock 保护 env_sched_list 的并发修改。 */
+
 static Pde *base_pgdir;
 
 static uint32_t asid_bitmap[NASID / 32] = {0};
@@ -26,6 +31,7 @@ static uint32_t asid_bitmap[NASID / 32] = {0};
  *   return -E_NO_FREE_ENV if no ASID is available.
  */
 static int asid_alloc(u_int *asid) {
+	/* TODO SMP phase 5: asid_bitmap 需要 asid_lock 保护并发分配。 */
 	for (u_int i = 0; i < NASID; ++i) {
 		int index = i >> 5;
 		int inner = i & 31;
@@ -114,6 +120,7 @@ int envid2env(u_int envid, struct Env **penv, int checkperm) {
 	 *   You may want to use 'ENVX'.
 	 */
 	/* Exercise 4.3: Your code here. (1/2) */
+	/* TODO SMP phase 4: curenv 改为 cpu_curenv()。 */
 	if (envid == 0) {
 		*penv = curenv;
 		return 0;
@@ -399,6 +406,8 @@ struct Env *env_create(const void *binary, size_t size, int priority) {
  *  Free env e and all memory it uses.
  */
 void env_free(struct Env *e) {
+	/* TODO SMP phase 6: env_free 可能被其他 CPU 调用释放正在运行的 env，
+	 * 需要持 env_sched_lock 检查 env_running 标记。 */
 	Pte *pt;
 	u_int pdeno, pteno, pa;
 
@@ -443,6 +452,8 @@ void env_free(struct Env *e) {
  *  Free env e, and schedule to run a new env if e is the current env.
  */
 void env_destroy(struct Env *e) {
+	/* TODO SMP phase 4: curenv 改为 cpu_curenv()。
+	 * TODO SMP phase 6: 如果 e 在另一个 CPU 上运行，需通过 IPI 让该 CPU 重新调度。 */
 	/* Hint: free e. */
 	env_free(e);
 
@@ -472,6 +483,9 @@ extern void env_pop_tf(struct Trapframe *tf, u_int asid) __attribute__((noreturn
  *   You may use these functions: 'env_pop_tf'.
  */
 void env_run(struct Env *e) {
+	/* TODO SMP phase 4: curenv/KSTACKTOP-1 改为每核版本。
+	 * TODO SMP phase 4: cur_pgdir 改为每核 cpu_cur_pgdir()。
+	 * TODO SMP phase 6: 需持 env_sched_lock 设置 env_running/env_cpu_id。 */
 	assert(e->env_status == ENV_RUNNABLE);
 	// WARNING BEGIN: DO NOT MODIFY FOLLOWING LINES!
 #ifdef MOS_PRE_ENV_RUN
@@ -589,6 +603,7 @@ void envid2env_check() {
 
 	assert(pe->env_id == pe2->env_id && re == 0);
 
+	/* TODO SMP phase 4: curenv = pe0 改为 cpu_data[cpu_id()].curenv = pe0。 */
 	curenv = pe0;
 	re = envid2env(pe2->env_id, &pe, 1);
 	assert(re == -E_BAD_ENV);

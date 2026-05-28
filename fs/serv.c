@@ -3,6 +3,10 @@
  * serves IPC requests from other environments.
  */
 
+/* TODO SMP phase 7: FS 服务进程固定绑定 CPU0。
+ * 在 env_create 时设置 env_pinned_cpu = 0。
+ * 调度器选择 env 时，如果 env_pinned_cpu >= 0，只有对应 CPU 可调度该 env。 */
+
 #include "serv.h"
 #include <fd.h>
 #include <fsreq.h>

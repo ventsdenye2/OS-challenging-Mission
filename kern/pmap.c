@@ -11,6 +11,14 @@ u_long npage;	       /* Amount of memory(in pages) */
 
 Pde *cur_pgdir;
 
+/* TODO SMP phase 5:
+ * - page_free_list 需 page_free_list_lock 保护。
+ * - page_alloc/page_free 需持锁。
+ * - pp_ref 修改需 pp_ref_lock 或统一 pmap_lock 保护。
+ * - asid_bitmap 需 asid_lock（在 env.c 中定义）。
+ * - pgdir_walk/page_insert/page_remove 中页表修改需持 pmap_lock。
+ * - 注意早期初始化（smp_init 之前）不应广播 IPI，需 smp_started 标志。 */
+
 struct Page *pages;
 static u_long freemem;
 
@@ -133,6 +141,7 @@ void page_init(void) {
  */
 int page_alloc(struct Page **new) {
 	/* Step 1: Get a page from free memory. If fails, return the error code.*/
+	/* TODO SMP phase 5: 持 page_free_list_lock 访问 page_free_list。 */
 	struct Page *pp;
 	/* Exercise 2.4: Your code here. (1/2) */
 

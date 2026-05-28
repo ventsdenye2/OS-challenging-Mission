@@ -1,6 +1,10 @@
 #include "serv.h"
 #include <mmu.h>
 
+/* TODO SMP phase 7:
+ * - block cache / bitmap / file metadata 修改需加锁。
+ * - 若 FS 仅 CPU0 运行，锁仍建议保留防止 syscall/dev 直接访问。 */
+
 struct Super *super;
 
 uint32_t *bitmap;

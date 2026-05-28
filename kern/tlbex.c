@@ -2,6 +2,12 @@
 #include <env.h>
 #include <pmap.h>
 
+/* TODO SMP phase 4: _do_tlb_refill 中 cur_pgdir 改为 cpu_cur_pgdir()。
+ * TODO SMP phase 4: do_tlb_mod 中 curenv 改为 cpu_curenv()。
+ * TODO SMP phase 5: 拆分 tlb_invalidate_local(asid, va) 和
+ *     tlb_invalidate(asid, va)（本地 + smp_group_function_call 广播）。
+ * TODO SMP phase 5: passive_alloc 中页表修改需持 pmap_lock。 */
+
 /* Lab 2 Key Code "tlb_invalidate" */
 /* Overview:
  *   Invalidate the TLB entry with specified 'asid' and virtual address 'va'.

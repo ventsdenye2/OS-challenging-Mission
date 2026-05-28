@@ -6,6 +6,7 @@
 #include <sched.h>
 #include <syscall.h>
 
+/* TODO SMP phase 4: 所有 curenv 引用需替换为 cpu_curenv()。 */
 extern struct Env *curenv;
 
 /* Overview:
@@ -260,6 +261,7 @@ int sys_exofork(void) {
 	/* Step 2: Copy the current Trapframe below 'KSTACKTOP' to the new env's 'env_tf'. */
 	/* Exercise 4.9: Your code here. (2/4) */
 
+	/* TODO SMP phase 4: KSTACKTOP-1 改为每核 trapframe 地址。 */
 	e->env_tf = *((struct Trapframe *)KSTACKTOP - 1);
 
 	/* Step 3: Set the new env's 'env_tf.regs[2]' to 0 to indicate the return value in child. */
@@ -339,6 +341,7 @@ int sys_set_trapframe(u_int envid, struct Trapframe *tf) {
 	struct Env *env;
 	try(envid2env(envid, &env, 1));
 	if (env == curenv) {
+		/* TODO SMP phase 4: KSTACKTOP-1 改为每核 trapframe 地址。 */
 		*((struct Trapframe *)KSTACKTOP - 1) = *tf;
 		// return `tf->regs[2]` instead of 0, because return value overrides regs[2] on
 		// current trapframe.
@@ -391,6 +394,7 @@ int sys_ipc_recv(u_int dstva) {
 	TAILQ_REMOVE(&env_sched_list, curenv, env_sched_link);
 
 	/* Step 5: Give up the CPU and block until a message is received. */
+	/* TODO SMP phase 4: KSTACKTOP-1 改为每核 trapframe 地址。 */
 	((struct Trapframe *)KSTACKTOP - 1)->regs[2] = 0;
 	schedule(1);
 }
@@ -461,6 +465,7 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 }
 
 // XXX: kernel does busy waiting here, blocking all envs
+/* TODO SMP phase 7: sys_cgetc 忙等会让单核独占，应在等待时 schedule(1)。 */
 int sys_cgetc(void) {
 	int ch;
 	while ((ch = scancharc()) == 0) {
