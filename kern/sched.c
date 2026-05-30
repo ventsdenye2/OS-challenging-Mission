@@ -1,6 +1,7 @@
 #include <env.h>
 #include <pmap.h>
 #include <printk.h>
+#include <smp.h>
 
 /* TODO SMP phase 6:
  * - 'static int count' 改为每核 cpu_data[cpu_id()].sched_count。

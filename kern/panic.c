@@ -1,6 +1,7 @@
 #include <env.h>
 #include <print.h>
 #include <printk.h>
+#include <smp.h>
 
 void outputk(void *data, const char *buf, size_t len);
 

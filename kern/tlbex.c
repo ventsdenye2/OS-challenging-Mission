@@ -1,6 +1,7 @@
 #include <bitops.h>
 #include <env.h>
 #include <pmap.h>
+#include <smp.h>
 
 /* TODO SMP phase 4: _do_tlb_refill 中 cur_pgdir 改为 cpu_cur_pgdir()。
  * TODO SMP phase 4: do_tlb_mod 中 curenv 改为 cpu_curenv()。

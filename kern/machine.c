@@ -1,6 +1,7 @@
 #include <malta.h>
 #include <mmu.h>
 #include <printk.h>
+#include <smp.h>
 
 /* Lab 1 Key Code "printcharc" */
 /* Overview:

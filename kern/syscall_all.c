@@ -4,6 +4,7 @@
 #include <pmap.h>
 #include <printk.h>
 #include <sched.h>
+#include <smp.h>
 #include <syscall.h>
 
 /* TODO SMP phase 4: 所有 curenv 引用需替换为 cpu_curenv()。 */

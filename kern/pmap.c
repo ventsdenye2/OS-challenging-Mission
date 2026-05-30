@@ -4,6 +4,7 @@
 #include <mmu.h>
 #include <pmap.h>
 #include <printk.h>
+#include <smp.h>
 
 /* These variables are set by mips_detect_memory(ram_low_size); */
 static u_long memsize; /* Maximum physical address */

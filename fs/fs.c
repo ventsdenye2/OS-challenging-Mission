@@ -1,5 +1,6 @@
 #include "serv.h"
 #include <mmu.h>
+#include <smp.h>
 
 /* TODO SMP phase 7:
  * - block cache / bitmap / file metadata 修改需加锁。

@@ -5,6 +5,7 @@
 #include <pmap.h>
 #include <printk.h>
 #include <sched.h>
+#include <smp.h>
 
 struct Env envs[NENV] __attribute__((aligned(PAGE_SIZE))); // All environments
 
@@ -171,6 +172,8 @@ void env_init(void) {
 
 	for (i = NENV - 1; i >= 0; --i) {
 		envs[i].env_status = ENV_FREE;
+		envs[i].env_cpu_id = -1;
+		envs[i].env_running = 0;
 		LIST_INSERT_HEAD(&env_free_list, &envs[i], env_link);
 	}
 
@@ -273,6 +276,8 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	 */
 	e->env_user_tlb_mod_entry = 0; // for lab4
 	e->env_runs = 0;	       // for lab6
+	e->env_cpu_id = -1;	       // SMP: not assigned to any CPU yet
+	e->env_running = 0;	       // SMP: not currently running
 	/* Exercise 3.4: Your code here. (3/4) */
 	if ((r = asid_alloc(&e->env_asid)) != 0) {
 		return r;

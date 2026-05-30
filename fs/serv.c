@@ -12,6 +12,7 @@
 #include <fsreq.h>
 #include <lib.h>
 #include <mmu.h>
+#include <smp.h>
 /*
  * Fields
  * o_file: mapped descriptor for open file

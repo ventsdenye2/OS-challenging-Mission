@@ -1,6 +1,7 @@
 #include <env.h>
 #include <pmap.h>
 #include <printk.h>
+#include <smp.h>
 #include <trap.h>
 
 extern void handle_int(void);

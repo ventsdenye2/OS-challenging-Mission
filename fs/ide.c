@@ -9,6 +9,7 @@
 #include <lib.h>
 #include <malta.h>
 #include <mmu.h>
+#include <smp.h>
 
 /* Overview:
  *   Wait for the IDE device to complete previous requests and be ready
