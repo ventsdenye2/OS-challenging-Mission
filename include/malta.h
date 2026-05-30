@@ -40,4 +40,20 @@
  */
 #define MALTA_FPGA_HALT (MALTA_FPGA_BASE + 0x500)
 
+/*
+ * IPI mailbox register layout used by the challenge documentation.
+ *
+ * Stock QEMU Malta with a 24Kc CPU does not expose this Loongson-style IPI
+ * block, so kern/smp.c keeps MMIO access disabled by default and uses the same
+ * mailbox protocol through shared memory. Defining SMP_USE_MMIO_IPI=1 enables
+ * these addresses for environments that provide the documented controller.
+ */
+#define IPI_BASE 0x3ff01000
+#define IPI_CPU_STRIDE 0x100
+#define IPI_STATUS(cpu) (IPI_BASE + (cpu) * IPI_CPU_STRIDE + 0x00)
+#define IPI_ENABLE(cpu) (IPI_BASE + (cpu) * IPI_CPU_STRIDE + 0x04)
+#define IPI_SET(cpu) (IPI_BASE + (cpu) * IPI_CPU_STRIDE + 0x08)
+#define IPI_CLEAR(cpu) (IPI_BASE + (cpu) * IPI_CPU_STRIDE + 0x0c)
+#define IPI_MAILBOX(cpu, slot) (IPI_BASE + (cpu) * IPI_CPU_STRIDE + 0x20 + (slot) * 0x08)
+
 #endif
