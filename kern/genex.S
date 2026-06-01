@@ -1,5 +1,6 @@
 #include <asm/asm.h>
 #include <stackframe.h>
+#include <kclock.h>
 
 .macro BUILD_HANDLER exception handler
 NESTED(handle_\exception, TF_SIZE + 8, zero)
@@ -17,13 +18,22 @@ FEXPORT(ret_from_exception)
 	RESTORE_ALL
 	eret
 
-NESTED(handle_int, TF_SIZE, zero)
+NESTED(handle_int, TF_SIZE + 8, zero)
 	mfc0    t0, CP0_CAUSE
 	mfc0    t2, CP0_STATUS
 	and     t0, t2
+	andi    t1, t0, STATUS_IM6
+	bnez    t1, ipi_irq
 	andi    t1, t0, STATUS_IM7
 	bnez    t1, timer_irq
+	j       ret_from_exception
+ipi_irq:
+	addiu   sp, sp, -8
+	jal     handle_ipi_irq
+	addiu   sp, sp, 8
+	j       ret_from_exception
 timer_irq:
+	RESET_KCLOCK
 	li      a0, 0
 	j       schedule
 END(handle_int)

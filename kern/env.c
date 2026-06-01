@@ -290,7 +290,7 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	 * recovery. Additionally, set UM to 1 so that when ERET unsets EXL, the processor
 	 * transitions to user mode.
 	 */
-	e->env_tf.cp0_status = STATUS_IM7 | STATUS_IE | STATUS_EXL | STATUS_UM;
+	e->env_tf.cp0_status = STATUS_IM6 | STATUS_IM7 | STATUS_IE | STATUS_EXL | STATUS_UM;
 	// Reserve space for 'argc' and 'argv'.
 	e->env_tf.regs[29] = USTACKTOP - sizeof(int) - sizeof(char **);
 

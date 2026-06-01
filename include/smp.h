@@ -11,6 +11,13 @@
 #define SMP_BOOT_WAIT 0x534d5030
 #define SMP_BOOT_READY 0x534d5031
 
+#define IPI_START 0x1
+#define IPI_CALL 0x2
+
+#ifndef SMP_USE_MMIO_IPI
+#define SMP_USE_MMIO_IPI 0
+#endif
+
 #ifndef __ASSEMBLER__
 
 #include <types.h>
