@@ -17,8 +17,23 @@
  *   Construct a new Entry HI and call 'tlb_out' to flush TLB.
  *   'tlb_out' is defined in mm/tlb_asm.S
  */
-void tlb_invalidate(u_int asid, u_long va) {
+
+/* Overview:
+ *   Invalidate only the local CPU's TLB entry. This is the low-level primitive;
+ *   'tlb_invalidate' calls this and will later broadcast via IPI.
+ */
+void tlb_invalidate_local(u_int asid, u_long va) {
 	tlb_out((va & ~GENMASK(PGSHIFT, 0)) | (asid & (NASID - 1)));
+}
+
+/* Overview:
+ *   Invalidate TLB entry on all CPUs. Currently only performs local invalidation;
+ *   broadcasting via IPI will be added in phase 5.
+ */
+void tlb_invalidate(u_int asid, u_long va) {
+	tlb_invalidate_local(asid, va);
+	/* TODO SMP phase 5: 通过 smp_group_function_call 广播 TLB 失效到其他 CPU。
+	 *   smp_group_function_call(&tlb_invalidate_local, asid, (u_int)va); */
 }
 /* End of Key Code "tlb_invalidate" */
 
@@ -53,7 +68,7 @@ static void passive_alloc(u_int va, Pde *pgdir, u_int asid) {
  *  Refill TLB.
  */
 void _do_tlb_refill(u_long *pentrylo, u_int va, u_int asid) {
-	tlb_invalidate(asid, va);
+	tlb_invalidate_local(asid, va);
 	Pte *ppte;
 	/* Hints:
 	 *  Invoke 'page_lookup' repeatedly in a loop to find the page table entry '*ppte'

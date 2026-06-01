@@ -47,6 +47,11 @@ void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1);
 /* IPI 中断处理入口；阶段 1 保留为空实现。 */
 void handle_ipi_irq(void);
 
+/* TLB 失效操作（阶段 3 提供签名，阶段 5 启用广播）。
+ * tlb_invalidate_local: 仅使本地 TLB 条目失效。
+ * tlb_invalidate 声明在 mmu.h，阶段 5 将实现为本地失效 + IPI 广播。 */
+void tlb_invalidate_local(u_int asid, u_long va);
+
 #endif
 
 #endif
