@@ -17,16 +17,27 @@
 #else
 
 static volatile int ipi_seen[NR_CPUS];
+static volatile int ipi_count[NR_CPUS];
 
 static void ipi_test_handler(u_int arg0, u_int arg1) {
-	ipi_seen[cpu_id()] = arg0 + arg1;
-	printk("ipi call on cpu %d value %d\n", cpu_id(), ipi_seen[cpu_id()]);
+	int cpu = cpu_id();
+
+	ipi_seen[cpu] = arg0 + arg1;
+	ipi_count[cpu]++;
+	if (ipi_count[cpu] == 1 || ipi_count[cpu] == 100) {
+		printk("ipi call on cpu %d value %d count %d\n", cpu, ipi_seen[cpu],
+		       ipi_count[cpu]);
+	}
 }
 
 static void test_ipi_communication(void) {
+	int i;
+
 	if (cpu_id() == 0) {
-		smp_group_function_call(ipi_test_handler, 20, 22);
-		printk("cpu1 seen = %d\n", ipi_seen[1]);
+		for (i = 0; i < 100; i++) {
+			smp_group_function_call(ipi_test_handler, 20, 22);
+		}
+		printk("cpu1 seen = %d count = %d\n", ipi_seen[1], ipi_count[1]);
 	}
 }
 

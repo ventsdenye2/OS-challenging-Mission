@@ -53,6 +53,10 @@ void smp_secondary_start(void);
 void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1);
 /* IPI 中断处理入口；阶段 1 保留为空实现。 */
 void handle_ipi_irq(void);
+/* Timer 中断处理入口；启动早期只确认中断，调度可用后才进入 schedule。 */
+void handle_timer_irq(void);
+/* 标记 CPU0 已经进入调度路径，timer interrupt 可以触发 schedule。 */
+void smp_note_schedule_ready(void);
 
 /* TLB 失效操作（阶段 3 提供签名，阶段 5 启用广播）。
  * tlb_invalidate_local: 仅使本地 TLB 条目失效。

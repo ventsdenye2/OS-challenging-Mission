@@ -34,8 +34,10 @@ ipi_irq:
 	j       ret_from_exception
 timer_irq:
 	RESET_KCLOCK
-	li      a0, 0
-	j       schedule
+	addiu   sp, sp, -8
+	jal     handle_timer_irq
+	addiu   sp, sp, 8
+	j       ret_from_exception
 END(handle_int)
 
 BUILD_HANDLER tlb do_tlb_refill

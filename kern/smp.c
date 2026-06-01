@@ -1,9 +1,14 @@
 #include <mmu.h>
 #include <asm/cp0regdef.h>
+#include <kclock.h>
 #include <malta.h>
 #include <printk.h>
 #include <smp.h>
 #include <spinlock.h>
+
+#if !defined(LAB) || LAB >= 3
+#include <sched.h>
+#endif
 
 /* 全局 per-cpu 数据表。 */
 struct cpu_local_data cpu_data[NR_CPUS];
@@ -21,6 +26,7 @@ static volatile int ipi_ready[NR_CPUS];
 static volatile int ipi_done[NR_CPUS];
 static volatile u_int ipi_pending[NR_CPUS];
 static volatile u_int ipi_mailbox[NR_CPUS][IPI_MBOX_NR];
+static volatile int timer_schedule_ready;
 static spinlock_t ipi_call_lock = SPINLOCK_INIT;
 
 #if SMP_USE_MMIO_IPI
@@ -71,11 +77,19 @@ static void setup_ipi_mmio(int i) {
 #endif
 }
 
-static void setup_ipi_interrupts(void) {
+static void setup_timer_compare(void) {
+	u_int interval = TIMER_INTERVAL;
+
+	__asm__ volatile("mtc0 $0, $9");
+	__asm__ volatile("mtc0 %0, $11" : : "r"(interval));
+}
+
+static void setup_cpu_interrupts(void) {
 	u_int status;
 
+	setup_timer_compare();
 	__asm__ volatile("mfc0 %0, $12" : "=r"(status));
-	status |= STATUS_IE | STATUS_IM6;
+	status |= STATUS_IE | STATUS_IM6 | STATUS_IM7;
 	__asm__ volatile("mtc0 %0, $12" : : "r"(status));
 	smp_sync();
 }
@@ -128,7 +142,7 @@ void smp_init(void) {
 		setup_ipi_mmio(i);
 	}
 	ipi_ready[0] = 1;
-	setup_ipi_interrupts();
+	setup_cpu_interrupts();
 	smp_sync();
 	smp_boot_ready = SMP_BOOT_READY;
 	smp_sync();
@@ -137,7 +151,7 @@ void smp_init(void) {
 void smp_secondary_start(void) {
 	int cpu = cpu_id();
 
-	setup_ipi_interrupts();
+	setup_cpu_interrupts();
 	ipi_ready[cpu] = 1;
 	smp_sync();
 	printk("slave online\n");
@@ -181,6 +195,20 @@ void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1) {
 		}
 	}
 	spin_unlock(&ipi_call_lock);
+}
+
+void smp_note_schedule_ready(void) {
+	if (cpu_id() == 0) {
+		timer_schedule_ready = 1;
+	}
+}
+
+void handle_timer_irq(void) {
+#if !defined(LAB) || LAB >= 3
+	if (cpu_id() == 0 && timer_schedule_ready) {
+		schedule(0);
+	}
+#endif
 }
 
 void handle_ipi_irq(void) {

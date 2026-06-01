@@ -26,6 +26,8 @@ void schedule(int yield) {
 	/* TODO SMP phase 6: curenv 改为 cpu_curenv()。 */
 	struct Env *e = curenv;
 
+	smp_note_schedule_ready();
+
 	/* We always decrease the 'count' by 1.
 	 *
 	 * If 'yield' is set, or 'count' has been decreased to 0, or 'e' (previous 'curenv') is

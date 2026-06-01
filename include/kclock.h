@@ -1,9 +1,10 @@
 #ifndef _KCLOCK_H_
 #define _KCLOCK_H_
 
-#include <asm/asm.h>
-
 #define TIMER_INTERVAL (500000) // WARNING: DO NOT MODIFY THIS LINE!
+
+#ifdef __ASSEMBLER__
+#include <asm/asm.h>
 
 // clang-format off
 .macro RESET_KCLOCK
@@ -21,4 +22,6 @@
 	mtc0 	t0, CP0_COMPARE
 .endm
 // clang-format on
+#endif /* __ASSEMBLER__ */
+
 #endif
