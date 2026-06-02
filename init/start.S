@@ -53,10 +53,7 @@ secondary_wait:
 		lw      t2, 0(t1)
 		bne     t2, t3, 1b
 		sync
-		la      sp, smp_kernel_stacks
-		li      t1, SMP_KSTACK_SIZE
-		multu   t0, t1
-		mflo    t2
-		addu    sp, sp, t2
-		addu    sp, sp, t1
+		li      sp, KSTACKTOP
+		sll     t2, t0, KSTACKSHIFT
+		subu    sp, sp, t2
 		j       smp_secondary_start

@@ -1,5 +1,6 @@
 #include <asm/asm.h>
 #include <mmu.h>
+#include <smp.h>
 #include <trap.h>
 
 // clang-format off
@@ -14,7 +15,16 @@
 	* If STATUS_UM is not set, the exception was triggered in kernel mode.
 	* $sp is already a kernel stack pointer, we don't need to set it again.
 	*/
-	li      sp, KSTACKTOP
+	mfc0    sp, CP0_EBASE
+	andi    sp, sp, 0x03ff
+	sltiu   k1, sp, NR_CPUS
+	bnez    k1, 2f
+	nop
+	move    sp, zero
+2:
+	sll     sp, sp, KSTACKSHIFT
+	li      k1, KSTACKTOP
+	subu    sp, k1, sp
 1:
 	subu    sp, sp, TF_SIZE
 	sw      k0, TF_REG29(sp)

@@ -6,8 +6,8 @@
 /* 当前 SMP 移植阶段默认支持的 CPU 数量，后续可扩展。 */
 #define NR_CPUS 2
 
-/* 每个 CPU 暂时预留的启动/内核栈大小。 */
-#define SMP_KSTACK_SIZE (4 * PAGE_SIZE)
+/* 每个 CPU 的启动/内核栈大小，保留旧名兼容早期阶段代码。 */
+#define SMP_KSTACK_SIZE KSTACKSIZE
 #define SMP_BOOT_WAIT 0x534d5030
 #define SMP_BOOT_READY 0x534d5031
 
@@ -35,7 +35,6 @@ struct cpu_local_data {
 
 /* 所有 CPU 的 per-cpu 状态表。 */
 extern struct cpu_local_data cpu_data[NR_CPUS];
-extern u_char smp_kernel_stacks[NR_CPUS][SMP_KSTACK_SIZE];
 extern volatile int smp_boot_ready;
 
 /* 返回当前 CPU 编号。 */
@@ -44,6 +43,8 @@ int cpu_id(void);
 struct Env *cpu_curenv(void);
 /* 返回当前 CPU 的 cur_pgdir。 */
 Pde *cpu_cur_pgdir(void);
+/* 返回当前 CPU 的内核栈顶。 */
+u_long cpu_kstack_top(void);
 
 /* 初始化 SMP 公共状态；阶段 1 只填充静态 per-cpu 表。 */
 void smp_init(void);

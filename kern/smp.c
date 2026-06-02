@@ -12,7 +12,6 @@
 
 /* 全局 per-cpu 数据表。 */
 struct cpu_local_data cpu_data[NR_CPUS];
-u_char smp_kernel_stacks[NR_CPUS][SMP_KSTACK_SIZE] __attribute__((aligned(8)));
 volatile int smp_boot_ready = SMP_BOOT_WAIT;
 
 enum {
@@ -58,6 +57,10 @@ struct Env *cpu_curenv(void) {
 
 Pde *cpu_cur_pgdir(void) {
 	return cpu_data[cpu_id()].cur_pgdir;
+}
+
+u_long cpu_kstack_top(void) {
+	return cpu_data[cpu_id()].kernel_stack_top;
 }
 
 static void setup_ipi_mmio(int i) {
@@ -131,11 +134,7 @@ void smp_init(void) {
 		cpu_data[i].cpu_id = i;
 		cpu_data[i].curenv = 0;
 		cpu_data[i].cur_pgdir = 0;
-		if (i == 0) {
-			cpu_data[i].kernel_stack_top = KSTACKTOP;
-		} else {
-			cpu_data[i].kernel_stack_top = (u_long)&smp_kernel_stacks[i][SMP_KSTACK_SIZE];
-		}
+		cpu_data[i].kernel_stack_top = KSTACKTOP_CPU(i);
 		ipi_ready[i] = 0;
 		ipi_done[i] = 1;
 		ipi_pending[i] = 0;

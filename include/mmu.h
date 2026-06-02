@@ -120,10 +120,13 @@
  o
 */
 
+#define ULIM 0x80000000
 #define KERNBASE 0x80020000
 
+#define KSTACKSHIFT 14
+#define KSTACKSIZE (1 << KSTACKSHIFT)
 #define KSTACKTOP (ULIM + PDMAP)
-#define ULIM 0x80000000
+#define KSTACKTOP_CPU(id) (KSTACKTOP - ((id) * KSTACKSIZE))
 
 #define UVPT (ULIM - PDMAP)
 #define UPAGES (UVPT - PDMAP)
