@@ -45,6 +45,8 @@ struct Env *cpu_curenv(void);
 Pde *cpu_cur_pgdir(void);
 /* 返回当前 CPU 的内核栈顶。 */
 u_long cpu_kstack_top(void);
+/* 返回当前 CPU 内核栈上的 Trapframe 地址。 */
+struct Trapframe *cpu_trapframe(void);
 
 /* 初始化 SMP 公共状态；阶段 1 只填充静态 per-cpu 表。 */
 void smp_init(void);

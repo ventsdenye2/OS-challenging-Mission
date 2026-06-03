@@ -28,24 +28,24 @@ void _panic(const char *file, int line, const char *func, const char *fmt, ...) 
 
 #if !defined(LAB) || LAB >= 3
 	extern struct Env envs[];
-	extern struct Env *curenv;
-	extern struct Pde *cur_pgdir;
+	struct Env *cur_env = cpu_curenv();
+	Pde *cur_dir = cpu_cur_pgdir();
 
-	if ((u_long)curenv >= KERNBASE) {
-		printk("curenv:    %x (id = 0x%x, off = %d)\n", curenv, curenv->env_id,
-		       curenv - envs);
-	} else if (curenv) {
-		printk("curenv:    %x (invalid)\n", curenv);
+	if ((u_long)cur_env >= KERNBASE) {
+		printk("curenv:    %x (id = 0x%x, off = %d)\n", cur_env, cur_env->env_id,
+		       cur_env - envs);
+	} else if (cur_env) {
+		printk("curenv:    %x (invalid)\n", cur_env);
 	} else {
 		printk("curenv:    NULL\n");
 	}
 
-	if ((u_long)cur_pgdir >= KERNBASE) {
-		printk("cur_pgdir: %x\n", cur_pgdir);
-	} else if (cur_pgdir) {
-		printk("cur_pgdir: %x (invalid)\n", cur_pgdir);
+	if ((u_long)cur_dir >= KERNBASE) {
+		printk("cur_pgdir: %x\n", cur_dir);
+	} else if (cur_dir) {
+		printk("cur_pgdir: %x (invalid)\n", cur_dir);
 	} else {
-		printk("cur_pgdir: NULL\n", cur_pgdir);
+		printk("cur_pgdir: NULL\n", cur_dir);
 	}
 #endif
 

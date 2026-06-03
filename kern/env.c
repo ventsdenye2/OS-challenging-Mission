@@ -15,10 +15,7 @@ static struct Env_list env_free_list; // Free list
 // Invariant: 'env' in 'env_sched_list' iff. 'env->env_status' is 'RUNNABLE'.
 struct Env_sched_list env_sched_list; // Runnable list
 
-/* TODO SMP phase 4: 替换全局 curenv 为每核 cpu_data[cpu_id()].curenv。
- * 所有直接读写 curenv 的地方（envid2env, env_free, env_destroy, env_run, env_check）
- * 需要改为通过 cpu_curenv() 访问。
- * 同时需要增加 env_sched_lock 保护 env_sched_list 的并发修改。 */
+/* TODO SMP phase 6: 增加 env_sched_lock 保护 env_sched_list 的并发修改。 */
 
 static Pde *base_pgdir;
 
@@ -121,9 +118,8 @@ int envid2env(u_int envid, struct Env **penv, int checkperm) {
 	 *   You may want to use 'ENVX'.
 	 */
 	/* Exercise 4.3: Your code here. (1/2) */
-	/* TODO SMP phase 4: curenv 改为 cpu_curenv()。 */
 	if (envid == 0) {
-		*penv = curenv;
+		*penv = cpu_curenv();
 		return 0;
 	}
 	e = &envs[ENVX(envid)];
@@ -139,7 +135,7 @@ int envid2env(u_int envid, struct Env **penv, int checkperm) {
 	 *   If violated, return '-E_BAD_ENV'.
 	 */
 	/* Exercise 4.3: Your code here. (2/2) */
-	if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
+	if (checkperm && e != cpu_curenv() && e->env_parent_id != cpu_curenv()->env_id) {
 		return -E_BAD_ENV;
 	}
 
@@ -417,7 +413,7 @@ void env_free(struct Env *e) {
 	u_int pdeno, pteno, pa;
 
 	/* Hint: Note the environment's demise.*/
-	printk("[%08x] free env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
+	printk("[%08x] free env %08x\n", cpu_curenv() ? cpu_curenv()->env_id : 0, e->env_id);
 
 	/* Hint: Flush all mapped pages in the user portion of the address space */
 	for (pdeno = 0; pdeno < PDX(UTOP); pdeno++) {
@@ -457,14 +453,13 @@ void env_free(struct Env *e) {
  *  Free env e, and schedule to run a new env if e is the current env.
  */
 void env_destroy(struct Env *e) {
-	/* TODO SMP phase 4: curenv 改为 cpu_curenv()。
-	 * TODO SMP phase 6: 如果 e 在另一个 CPU 上运行，需通过 IPI 让该 CPU 重新调度。 */
+	/* TODO SMP phase 6: 如果 e 在另一个 CPU 上运行，需通过 IPI 让该 CPU 重新调度。 */
 	/* Hint: free e. */
 	env_free(e);
 
 	/* Hint: schedule to run a new environment. */
-	if (curenv == e) {
-		curenv = NULL;
+	if (cpu_curenv() == e) {
+		cpu_data[cpu_id()].curenv = NULL;
 		printk("i am killed ... \n");
 		schedule(1);
 	}
@@ -488,9 +483,8 @@ extern void env_pop_tf(struct Trapframe *tf, u_int asid) __attribute__((noreturn
  *   You may use these functions: 'env_pop_tf'.
  */
 void env_run(struct Env *e) {
-	/* TODO SMP phase 4: curenv/KSTACKTOP-1 改为每核版本。
-	 * TODO SMP phase 4: cur_pgdir 改为每核 cpu_cur_pgdir()。
-	 * TODO SMP phase 6: 需持 env_sched_lock 设置 env_running/env_cpu_id。 */
+	/* TODO SMP phase 6: 需持 env_sched_lock 设置 env_running/env_cpu_id。 */
+	int cpu = cpu_id();
 	assert(e->env_status == ENV_RUNNABLE);
 	// WARNING BEGIN: DO NOT MODIFY FOLLOWING LINES!
 #ifdef MOS_PRE_ENV_RUN
@@ -499,22 +493,20 @@ void env_run(struct Env *e) {
 	// WARNING END
 
 	/* Step 1:
-	 *   If 'curenv' is NULL, this is the first time through.
-	 *   If not, we may be switching from a previous env, so save its context into
-	 *   'curenv->env_tf' first.
+	 *   If the current CPU has a running env, save its context into its 'env_tf' first.
 	 */
-	if (curenv) {
-		curenv->env_tf = *((struct Trapframe *)KSTACKTOP - 1);
+	if (cpu_curenv()) {
+		cpu_curenv()->env_tf = *cpu_trapframe();
 	}
 
-	/* Step 2: Change 'curenv' to 'e'. */
-	curenv = e;
-	curenv->env_runs++; // lab6
+	/* Step 2: Change this CPU's curenv to 'e'. */
+	cpu_data[cpu].curenv = e;
+	e->env_runs++; // lab6
 
-	/* Step 3: Change 'cur_pgdir' to 'curenv->env_pgdir', switching to its address space. */
+	/* Step 3: Change this CPU's cur_pgdir to 'e->env_pgdir', switching to its address space. */
 	/* Exercise 3.8: Your code here. (1/2) */
 
-	cur_pgdir = curenv->env_pgdir;
+	cpu_data[cpu].cur_pgdir = e->env_pgdir;
 
 	/* Step 4: Use 'env_pop_tf' to restore the curenv's saved context (registers) and return/go
 	 * to user mode.
@@ -525,7 +517,7 @@ void env_run(struct Env *e) {
 	 *    returning to the kernel caller, making 'env_run' a 'noreturn' function as well.
 	 */
 	/* Exercise 3.8: Your code here. (2/2) */
-	env_pop_tf(&curenv->env_tf, curenv->env_asid);
+	env_pop_tf(&e->env_tf, e->env_asid);
 }
 
 void env_check() {

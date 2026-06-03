@@ -3,9 +3,7 @@
 #include <pmap.h>
 #include <smp.h>
 
-/* TODO SMP phase 4: _do_tlb_refill 中 cur_pgdir 改为 cpu_cur_pgdir()。
- * TODO SMP phase 4: do_tlb_mod 中 curenv 改为 cpu_curenv()。
- * TODO SMP phase 5: 拆分 tlb_invalidate_local(asid, va) 和
+/* TODO SMP phase 5: 拆分 tlb_invalidate_local(asid, va) 和
  *     tlb_invalidate(asid, va)（本地 + smp_group_function_call 广播）。
  * TODO SMP phase 5: passive_alloc 中页表修改需持 pmap_lock。 */
 
@@ -79,8 +77,8 @@ void _do_tlb_refill(u_long *pentrylo, u_int va, u_int asid) {
 	 */
 
 	/* Exercise 2.9: Your code here. */
-	while (page_lookup(cur_pgdir, va, &ppte) == NULL) {
-		passive_alloc(va, cur_pgdir, asid);
+	while (page_lookup(cpu_cur_pgdir(), va, &ppte) == NULL) {
+		passive_alloc(va, cpu_cur_pgdir(), asid);
 	}
 
 	ppte = (Pte *)((u_long)ppte & ~0x7);
@@ -109,13 +107,13 @@ void do_tlb_mod(struct Trapframe *tf) {
 	tf->regs[29] -= sizeof(struct Trapframe);
 	*(struct Trapframe *)tf->regs[29] = tmp_tf;
 	Pte *pte;
-	page_lookup(cur_pgdir, tf->cp0_badvaddr, &pte);
-	if (curenv->env_user_tlb_mod_entry) {
+	page_lookup(cpu_cur_pgdir(), tf->cp0_badvaddr, &pte);
+	if (cpu_curenv()->env_user_tlb_mod_entry) {
 		tf->regs[4] = tf->regs[29];
 		tf->regs[29] -= sizeof(tf->regs[4]);
 		// Hint: Set 'cp0_epc' in the context 'tf' to 'curenv->env_user_tlb_mod_entry'.
 		/* Exercise 4.11: Your code here. */
-		tf->cp0_epc = curenv->env_user_tlb_mod_entry;
+		tf->cp0_epc = cpu_curenv()->env_user_tlb_mod_entry;
 	} else {
 		panic("TLB Mod but no user handler registered");
 	}

@@ -7,9 +7,6 @@
 #include <smp.h>
 #include <syscall.h>
 
-/* TODO SMP phase 4: 所有 curenv 引用需替换为 cpu_curenv()。 */
-extern struct Env *curenv;
-
 /* Overview:
  * 	This function is used to print a character on screen.
  *
@@ -45,7 +42,7 @@ int sys_print_cons(const void *s, u_int num) {
  * 	return the current environment id
  */
 u_int sys_getenvid(void) {
-	return curenv->env_id;
+	return cpu_curenv()->env_id;
 }
 
 /* Overview:
@@ -80,7 +77,7 @@ int sys_env_destroy(u_int envid) {
 	struct Env *e;
 	try(envid2env(envid, &e, 1));
 
-	printk("[%08x] destroying %08x\n", curenv->env_id, e->env_id);
+	printk("[%08x] destroying %08x\n", cpu_curenv()->env_id, e->env_id);
 	env_destroy(e);
 	return 0;
 }
@@ -257,13 +254,12 @@ int sys_exofork(void) {
 
 	/* Step 1: Allocate a new env using 'env_alloc'. */
 	/* Exercise 4.9: Your code here. (1/4) */
-	try(env_alloc(&e, curenv->env_id));
+	try(env_alloc(&e, cpu_curenv()->env_id));
 
-	/* Step 2: Copy the current Trapframe below 'KSTACKTOP' to the new env's 'env_tf'. */
+	/* Step 2: Copy the current Trapframe from this CPU's kernel stack to the new env's 'env_tf'. */
 	/* Exercise 4.9: Your code here. (2/4) */
 
-	/* TODO SMP phase 4: KSTACKTOP-1 改为每核 trapframe 地址。 */
-	e->env_tf = *((struct Trapframe *)KSTACKTOP - 1);
+	e->env_tf = *cpu_trapframe();
 
 	/* Step 3: Set the new env's 'env_tf.regs[2]' to 0 to indicate the return value in child. */
 	/* Exercise 4.9: Your code here. (3/4) */
@@ -274,7 +270,7 @@ int sys_exofork(void) {
 	/* Exercise 4.9: Your code here. (4/4) */
 
 	e->env_status = ENV_NOT_RUNNABLE;
-	e->env_pri = curenv->env_pri;
+	e->env_pri = cpu_curenv()->env_pri;
 
 	return e->env_id;
 }
@@ -318,8 +314,8 @@ int sys_set_env_status(u_int envid, u_int status) {
 	/* Step 4: Set the 'env_status' of 'env'. */
 	env->env_status = status;
 
-	/* Step 5: Use 'schedule' with 'yield' set if ths 'env' is 'curenv'. */
-	if (env == curenv) {
+	/* Step 5: Use 'schedule' with 'yield' set if ths 'env' is the current CPU's curenv. */
+	if (env == cpu_curenv()) {
 		schedule(1);
 	}
 	return 0;
@@ -341,9 +337,8 @@ int sys_set_trapframe(u_int envid, struct Trapframe *tf) {
 	}
 	struct Env *env;
 	try(envid2env(envid, &env, 1));
-	if (env == curenv) {
-		/* TODO SMP phase 4: KSTACKTOP-1 改为每核 trapframe 地址。 */
-		*((struct Trapframe *)KSTACKTOP - 1) = *tf;
+	if (env == cpu_curenv()) {
+		*cpu_trapframe() = *tf;
 		// return `tf->regs[2]` instead of 0, because return value overrides regs[2] on
 		// current trapframe.
 		return tf->regs[2];
@@ -380,23 +375,22 @@ int sys_ipc_recv(u_int dstva) {
 	/* Step 2: Set 'curenv->env_ipc_recving' to 1. */
 	/* Exercise 4.8: Your code here. (1/8) */
 
-	curenv->env_ipc_recving = 1;
+	cpu_curenv()->env_ipc_recving = 1;
 
 	/* Step 3: Set the value of 'curenv->env_ipc_dstva'. */
 	/* Exercise 4.8: Your code here. (2/8) */
 
-	curenv->env_ipc_dstva = dstva;
+	cpu_curenv()->env_ipc_dstva = dstva;
 
 	/* Step 4: Set the status of 'curenv' to 'ENV_NOT_RUNNABLE' and remove it from
 	 * 'env_sched_list'. */
 	/* Exercise 4.8: Your code here. (3/8) */
 
-	curenv->env_status = ENV_NOT_RUNNABLE;
-	TAILQ_REMOVE(&env_sched_list, curenv, env_sched_link);
+	cpu_curenv()->env_status = ENV_NOT_RUNNABLE;
+	TAILQ_REMOVE(&env_sched_list, cpu_curenv(), env_sched_link);
 
 	/* Step 5: Give up the CPU and block until a message is received. */
-	/* TODO SMP phase 4: KSTACKTOP-1 改为每核 trapframe 地址。 */
-	((struct Trapframe *)KSTACKTOP - 1)->regs[2] = 0;
+	cpu_trapframe()->regs[2] = 0;
 	schedule(1);
 }
 
@@ -441,7 +435,7 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 
 	/* Step 4: Set the target's ipc fields. */
 	e->env_ipc_value = value;
-	e->env_ipc_from = curenv->env_id;
+	e->env_ipc_from = cpu_curenv()->env_id;
 	e->env_ipc_perm = PTE_V | perm;
 	e->env_ipc_recving = 0;
 
@@ -456,7 +450,7 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 	/* Return -E_INVAL if 'srcva' is not zero and not mapped in 'curenv'. */
 	if (srcva != 0) {
 		/* Exercise 4.8: Your code here. (8/8) */
-		p = page_lookup(curenv->env_pgdir, srcva, NULL);
+		p = page_lookup(cpu_curenv()->env_pgdir, srcva, NULL);
 		if (p == NULL) {
 			return -E_INVAL;
 		}

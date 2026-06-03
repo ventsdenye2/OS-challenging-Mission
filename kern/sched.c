@@ -23,8 +23,7 @@
  */
 void schedule(int yield) {
 	static int count = 0; // remaining time slices of current env
-	/* TODO SMP phase 6: curenv 改为 cpu_curenv()。 */
-	struct Env *e = curenv;
+	struct Env *e = cpu_curenv();
 
 	smp_note_schedule_ready();
 

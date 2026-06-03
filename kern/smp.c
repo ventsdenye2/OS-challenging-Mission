@@ -5,6 +5,7 @@
 #include <printk.h>
 #include <smp.h>
 #include <spinlock.h>
+#include <trap.h>
 
 #if !defined(LAB) || LAB >= 3
 #include <sched.h>
@@ -61,6 +62,10 @@ Pde *cpu_cur_pgdir(void) {
 
 u_long cpu_kstack_top(void) {
 	return cpu_data[cpu_id()].kernel_stack_top;
+}
+
+struct Trapframe *cpu_trapframe(void) {
+	return (struct Trapframe *)cpu_kstack_top() - 1;
 }
 
 static void setup_ipi_mmio(int i) {
