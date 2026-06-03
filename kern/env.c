@@ -6,6 +6,7 @@
 #include <printk.h>
 #include <sched.h>
 #include <smp.h>
+#include <spinlock.h>
 
 struct Env envs[NENV] __attribute__((aligned(PAGE_SIZE))); // All environments
 
@@ -20,6 +21,7 @@ struct Env_sched_list env_sched_list; // Runnable list
 static Pde *base_pgdir;
 
 static uint32_t asid_bitmap[NASID / 32] = {0};
+static spinlock_t asid_lock = SPINLOCK_INIT;
 
 /* Overview:
  *  Allocate an unused ASID.
@@ -29,16 +31,18 @@ static uint32_t asid_bitmap[NASID / 32] = {0};
  *   return -E_NO_FREE_ENV if no ASID is available.
  */
 static int asid_alloc(u_int *asid) {
-	/* TODO SMP phase 5: asid_bitmap 需要 asid_lock 保护并发分配。 */
+	spin_lock(&asid_lock);
 	for (u_int i = 0; i < NASID; ++i) {
 		int index = i >> 5;
 		int inner = i & 31;
 		if ((asid_bitmap[index] & (1 << inner)) == 0) {
 			asid_bitmap[index] |= 1 << inner;
 			*asid = i;
+			spin_unlock(&asid_lock);
 			return 0;
 		}
 	}
+	spin_unlock(&asid_lock);
 	return -E_NO_FREE_ENV;
 }
 
@@ -54,7 +58,9 @@ static int asid_alloc(u_int *asid) {
 static void asid_free(u_int i) {
 	int index = i >> 5;
 	int inner = i & 31;
+	spin_lock(&asid_lock);
 	asid_bitmap[index] &= ~(1 << inner);
+	spin_unlock(&asid_lock);
 }
 
 /* Overview:

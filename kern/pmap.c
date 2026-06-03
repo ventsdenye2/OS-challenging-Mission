@@ -5,6 +5,7 @@
 #include <pmap.h>
 #include <printk.h>
 #include <smp.h>
+#include <spinlock.h>
 
 /* These variables are set by mips_detect_memory(ram_low_size); */
 static u_long memsize; /* Maximum physical address */
@@ -12,13 +13,13 @@ u_long npage;	       /* Amount of memory(in pages) */
 
 Pde *cur_pgdir;
 
-/* TODO SMP phase 5:
- * - page_free_list 需 page_free_list_lock 保护。
- * - page_alloc/page_free 需持锁。
- * - pp_ref 修改需 pp_ref_lock 或统一 pmap_lock 保护。
- * - asid_bitmap 需 asid_lock（在 env.c 中定义）。
- * - pgdir_walk/page_insert/page_remove 中页表修改需持 pmap_lock。
- * - 注意早期初始化（smp_init 之前）不应广播 IPI，需 smp_started 标志。 */
+/* SMP 统一页管理锁：保护 page_free_list、pp_ref 和页表修改。
+ * 使用规则：
+ *   - page_alloc / page_free / page_decref 调用者必须持有 pmap_lock。
+ *   - page_insert / page_remove 内部获取锁，在调用 tlb_invalidate 前释放。
+ *   - tlb_invalidate 可能广播 IPI，因此必须在锁外调用以避免死锁。
+ *   - 早期初始化（smp_boot_ready == SMP_BOOT_WAIT）时 tlb_invalidate 仅本地失效。 */
+static spinlock_t pmap_lock = SPINLOCK_INIT;
 
 struct Page *pages;
 static u_long freemem;
@@ -140,27 +141,42 @@ void page_init(void) {
  *
  * Hint: Use LIST_FIRST and LIST_REMOVE defined in include/queue.h.
  */
-int page_alloc(struct Page **new) {
-	/* Step 1: Get a page from free memory. If fails, return the error code.*/
-	/* TODO SMP phase 5: 持 page_free_list_lock 访问 page_free_list。 */
+/* Overview:
+ *   Allocate a physical page from free memory (must be called with pmap_lock held).
+ */
+static int page_alloc_nolock(struct Page **new) {
 	struct Page *pp;
-	/* Exercise 2.4: Your code here. (1/2) */
 
 	pp = LIST_FIRST(&page_free_list);
 	if (pp == NULL) {
 		return -E_NO_MEM;
 	}
-
 	LIST_REMOVE(pp, pp_link);
-
-	/* Step 2: Initialize this page with zero.
-	 * Hint: use `memset`. */
-	/* Exercise 2.4: Your code here. (2/2) */
-
-	memset((void *)page2kva(pp), 0, PAGE_SIZE); // memset requests virtual address!!!!
-
+	memset((void *)page2kva(pp), 0, PAGE_SIZE);
 	*new = pp;
 	return 0;
+}
+
+/* Overview:
+ *   Allocate a physical page from free memory, and fill this page with zero.
+ *
+ * Post-Condition:
+ *   If failed to allocate a new page (out of memory, there's no free page), return -E_NO_MEM.
+ *   Otherwise, set the address of the allocated 'Page' to *pp, and return 0.
+ *
+ * Note:
+ *   This does NOT increase the reference count 'pp_ref' of the page - the caller must do these if
+ *   necessary (either explicitly or via page_insert).
+ *
+ * Hint: Use LIST_FIRST and LIST_REMOVE defined in include/queue.h.
+ */
+int page_alloc(struct Page **new) {
+	int r;
+
+	spin_lock(&pmap_lock);
+	r = page_alloc_nolock(new);
+	spin_unlock(&pmap_lock);
+	return r;
 }
 
 /* Overview:
@@ -173,7 +189,9 @@ void page_free(struct Page *pp) {
 	assert(pp->pp_ref == 0);
 	/* Just insert it into 'page_free_list'. */
 	/* Exercise 2.5: Your code here. */
+	spin_lock(&pmap_lock);
 	LIST_INSERT_HEAD(&page_free_list, pp, pp_link);
+	spin_unlock(&pmap_lock);
 }
 
 /* Overview:
@@ -212,7 +230,7 @@ static int pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte) {
 
 	if (!((*pgdir_entryp) & PTE_V)) {
 		if (create) {
-			try(page_alloc(&pp));
+			try(page_alloc_nolock(&pp));
 			*pgdir_entryp = page2pa(pp);
 			*pgdir_entryp = (*pgdir_entryp) | PTE_C_CACHEABLE | PTE_V;
 			pp->pp_ref++;
@@ -244,28 +262,40 @@ static int pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte) {
 int page_insert(Pde *pgdir, u_int asid, struct Page *pp, u_long va, u_int perm) {
 	Pte *pte;
 
+	spin_lock(&pmap_lock);
+
 	/* Step 1: Get corresponding page table entry. */
 	pgdir_walk(pgdir, va, 0, &pte);
 
 	if (pte && (*pte & PTE_V)) {
 		if (pa2page(*pte) != pp) {
-			page_remove(pgdir, asid, va);
+			/* Inline page_remove logic while holding pmap_lock. */
+			struct Page *old = pa2page(*pte);
+			assert(old->pp_ref > 0);
+			if (--old->pp_ref == 0) {
+				LIST_INSERT_HEAD(&page_free_list, old, pp_link);
+			}
+			*pte = 0;
 		} else {
-			tlb_invalidate(asid, va);
 			*pte = page2pa(pp) | perm | PTE_C_CACHEABLE | PTE_V;
+			spin_unlock(&pmap_lock);
+			tlb_invalidate(asid, va);
 			return 0;
 		}
 	}
 
-	/* Step 2: Flush TLB with 'tlb_invalidate'. */
-	/* Exercise 2.7: Your code here. (1/3) */
-
-	tlb_invalidate(asid, va);
+	/* Step 2: Flush TLB with 'tlb_invalidate' — deferred to after lock release. */
 
 	/* Step 3: Re-get or create the page table entry. */
 	/* If failed to create, return the error. */
 	/* Exercise 2.7: Your code here. (2/3) */
-	try(pgdir_walk(pgdir, va, 1, &pte));
+	{
+		int r = pgdir_walk(pgdir, va, 1, &pte);
+		if (r < 0) {
+			spin_unlock(&pmap_lock);
+			return r;
+		}
+	}
 
 	/* Step 4: Insert the page to the page table entry with 'perm | PTE_C_CACHEABLE | PTE_V'
 	 * and increase its 'pp_ref'. */
@@ -273,6 +303,8 @@ int page_insert(Pde *pgdir, u_int asid, struct Page *pp, u_long va, u_int perm) 
 	*pte = page2pa(pp) | perm | PTE_C_CACHEABLE | PTE_V;
 	pp->pp_ref++;
 
+	spin_unlock(&pmap_lock);
+	tlb_invalidate(asid, va);
 	return 0;
 }
 
@@ -310,12 +342,14 @@ struct Page *page_lookup(Pde *pgdir, u_long va, Pte **ppte) {
  *   When there's no references (mapped virtual address) to this page, release it.
  */
 void page_decref(struct Page *pp) {
+	spin_lock(&pmap_lock);
 	assert(pp->pp_ref > 0);
 
 	/* If 'pp_ref' reaches to 0, free this page. */
 	if (--pp->pp_ref == 0) {
-		page_free(pp);
+		LIST_INSERT_HEAD(&page_free_list, pp, pp_link);
 	}
+	spin_unlock(&pmap_lock);
 }
 
 /* Lab 2 Key Code "page_remove" */
@@ -324,17 +358,25 @@ void page_decref(struct Page *pp) {
 void page_remove(Pde *pgdir, u_int asid, u_long va) {
 	Pte *pte;
 
+	spin_lock(&pmap_lock);
+
 	/* Step 1: Get the page table entry, and check if the page table entry is valid. */
 	struct Page *pp = page_lookup(pgdir, va, &pte);
 	if (pp == NULL) {
+		spin_unlock(&pmap_lock);
 		return;
 	}
 
-	/* Step 2: Decrease reference count on 'pp'. */
-	page_decref(pp);
+	/* Step 2: Decrease reference count on 'pp' (inline, lock already held). */
+	assert(pp->pp_ref > 0);
+	if (--pp->pp_ref == 0) {
+		LIST_INSERT_HEAD(&page_free_list, pp, pp_link);
+	}
 
-	/* Step 3: Flush TLB. */
+	/* Step 3: Clear PTE and flush TLB (TLB flush done after lock release). */
 	*pte = 0;
+
+	spin_unlock(&pmap_lock);
 	tlb_invalidate(asid, va);
 	return;
 }

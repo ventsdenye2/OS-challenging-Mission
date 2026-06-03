@@ -3,9 +3,15 @@
 #include <pmap.h>
 #include <smp.h>
 
-/* TODO SMP phase 5: 拆分 tlb_invalidate_local(asid, va) 和
- *     tlb_invalidate(asid, va)（本地 + smp_group_function_call 广播）。
- * TODO SMP phase 5: passive_alloc 中页表修改需持 pmap_lock。 */
+/*
+ * TLB invalidation strategy:
+ *   - tlb_invalidate_local: always only flushes local TLB.
+ *   - tlb_invalidate: flushes local TLB; if SMP is started (smp_boot_ready),
+ *     broadcasts via smp_group_function_call to other CPUs.
+ *   - During early boot (smp_boot_ready == SMP_BOOT_WAIT), only CPU0 runs,
+ *     so local invalidation is sufficient and IPI broadcast is skipped.
+ *   - tlb_invalidate is always called OUTSIDE pmap_lock to avoid deadlock
+ *     with IPI spin-wait. */
 
 /* Lab 2 Key Code "tlb_invalidate" */
 /* Overview:
@@ -25,13 +31,18 @@ void tlb_invalidate_local(u_int asid, u_long va) {
 }
 
 /* Overview:
- *   Invalidate TLB entry on all CPUs. Currently only performs local invalidation;
- *   broadcasting via IPI will be added in phase 5.
+ *   Invalidate TLB entry on all CPUs. Performs local invalidation, and if
+ *   SMP is active, broadcasts to other CPUs via IPI.
+ *
+ *   IMPORTANT: Must be called OUTSIDE pmap_lock to avoid deadlock with
+ *   smp_group_function_call's spin-wait.
  */
 void tlb_invalidate(u_int asid, u_long va) {
 	tlb_invalidate_local(asid, va);
-	/* TODO SMP phase 5: 通过 smp_group_function_call 广播 TLB 失效到其他 CPU。
-	 *   smp_group_function_call(&tlb_invalidate_local, asid, (u_int)va); */
+	if (smp_boot_ready == SMP_BOOT_READY) {
+		smp_group_function_call((void (*)(u_int, u_int))tlb_invalidate_local, asid,
+					(u_int)va);
+	}
 }
 /* End of Key Code "tlb_invalidate" */
 
