@@ -606,8 +606,7 @@ void envid2env_check() {
 
 	assert(pe->env_id == pe2->env_id && re == 0);
 
-	/* TODO SMP phase 4: curenv = pe0 改为 cpu_data[cpu_id()].curenv = pe0。 */
-	curenv = pe0;
+	cpu_data[cpu_id()].curenv = pe0;
 	re = envid2env(pe2->env_id, &pe, 1);
 	assert(re == -E_BAD_ENV);
 	printk("envid2env() work well!\n");

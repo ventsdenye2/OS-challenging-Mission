@@ -27,7 +27,7 @@ static volatile int ipi_done[NR_CPUS];
 static volatile u_int ipi_pending[NR_CPUS];
 static volatile u_int ipi_mailbox[NR_CPUS][IPI_MBOX_NR];
 static volatile int timer_schedule_ready;
-static spinlock_t ipi_call_lock = SPINLOCK_INIT;
+static spinlock_t ipi_mailbox_lock[NR_CPUS];
 
 #if SMP_USE_MMIO_IPI
 static volatile u_int *ipi_status_reg[NR_CPUS];
@@ -131,6 +131,33 @@ static void ipi_send(u_int cpu, u_int signal) {
 	smp_sync();
 }
 
+static u_int ipi_status_read(int cpu) {
+#if SMP_USE_MMIO_IPI
+	return *ipi_status_reg[cpu];
+#else
+	return ipi_pending[cpu];
+#endif
+}
+
+static void ipi_status_clear(int cpu, u_int status) {
+#if SMP_USE_MMIO_IPI
+	*ipi_clear_reg[cpu] = status;
+#else
+	ipi_pending[cpu] &= ~status;
+#endif
+}
+
+static void ipi_wait_done(int target_cpu) {
+	while (!ipi_done[target_cpu]) {
+		if (ipi_status_read(cpu_id()) != 0) {
+			handle_ipi_irq();
+		} else {
+			__asm__ volatile("nop");
+		}
+	}
+	smp_sync();
+}
+
 void smp_init(void) {
 	int i;
 
@@ -140,6 +167,7 @@ void smp_init(void) {
 		cpu_data[i].curenv = 0;
 		cpu_data[i].cur_pgdir = 0;
 		cpu_data[i].kernel_stack_top = KSTACKTOP_CPU(i);
+		ipi_mailbox_lock[i] = SPINLOCK_INIT;
 		ipi_ready[i] = 0;
 		ipi_done[i] = 1;
 		ipi_pending[i] = 0;
@@ -179,26 +207,21 @@ void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1) {
 		return;
 	}
 
-	spin_lock(&ipi_call_lock);
 	for (cpu = 0; cpu < NR_CPUS; cpu++) {
 		if (cpu == self || !ipi_ready[cpu]) {
 			continue;
 		}
+
+		spin_lock(&ipi_mailbox_lock[cpu]);
 		ipi_done[cpu] = 0;
 		ipi_mailbox_write(cpu, IPI_MBOX_FN, (u_int)fn);
 		ipi_mailbox_write(cpu, IPI_MBOX_ARG0, arg0);
 		ipi_mailbox_write(cpu, IPI_MBOX_ARG1, arg1);
 		ipi_send(cpu, IPI_CALL);
+		ipi_wait_done(cpu);
+		ipi_mailbox_write(cpu, IPI_MBOX_FN, 0);
+		spin_unlock(&ipi_mailbox_lock[cpu]);
 	}
-	for (cpu = 0; cpu < NR_CPUS; cpu++) {
-		if (cpu == self || !ipi_ready[cpu]) {
-			continue;
-		}
-		while (!ipi_done[cpu]) {
-			__asm__ volatile("nop");
-		}
-	}
-	spin_unlock(&ipi_call_lock);
 }
 
 void smp_note_schedule_ready(void) {
@@ -222,20 +245,12 @@ void handle_ipi_irq(void) {
 	u_int arg0;
 	u_int arg1;
 
-#if SMP_USE_MMIO_IPI
-	status = *ipi_status_reg[cpu];
-#else
-	status = ipi_pending[cpu];
-#endif
+	status = ipi_status_read(cpu);
 	if (status == 0) {
 		return;
 	}
 
-#if SMP_USE_MMIO_IPI
-	*ipi_clear_reg[cpu] = status;
-#else
-	ipi_pending[cpu] &= ~status;
-#endif
+	ipi_status_clear(cpu, status);
 	smp_sync();
 
 	if (status & IPI_START) {
