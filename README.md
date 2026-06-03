@@ -59,7 +59,7 @@ sudo apt install -y build-essential gcc-mips-linux-gnu \
 
 配置完成后，你不再需要通过 PowerShell 的复杂命令进入，推荐以下三种最快的方式：
 
-### 方法 1：最推荐（VS Code 直接启动）
+### 方法 1：VS Code 直接启动
 
 1. 打开 Windows 上的 **VS Code**。
 2. 点击左下角的 **蓝色“远程窗口”图标**（两个尖括号 `< >`）。
@@ -81,9 +81,8 @@ sudo apt install -y build-essential gcc-mips-linux-gnu \
 
 ---
 
-## 💡 给开发者的最后建议
+## 💡 
 
 * **文件路径**：务必将代码存放在 WSL 的家目录下（如 `~/mos/`），**不要**放在 `/mnt/d/` 下开发，否则多核编译时文件 IO 会慢到让你怀疑人生。
 * **退出 QEMU**：在使用 `-nographic` 模式调试时，记住退出快捷键是 `Ctrl + A` 紧接着按 `X`。
 
-你现在已经准备好处理多核间的 **同步与互斥 (Synchronization & Mutual Exclusion)** 了。你是打算先在 `boot.S` 里用 `CP0_EBase` 区分 CPU ID，还是先写一个简单的自旋锁 (Spinlock) 试试手？
