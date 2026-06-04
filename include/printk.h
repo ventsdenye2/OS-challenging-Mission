@@ -3,6 +3,9 @@
 
 #include <machine.h>
 #include <stdarg.h>
+#include <spinlock.h>
+
+extern spinlock_t console_lock;
 
 void printk(const char *fmt, ...);
 

@@ -4,7 +4,7 @@
 #include <spinlock.h>
 #include <trap.h>
 
-static spinlock_t console_lock = SPINLOCK_INIT;
+spinlock_t console_lock = SPINLOCK_INIT;
 
 /* Lab 1 Key Code "outputk" */
 void outputk(void *data, const char *buf, size_t len) {

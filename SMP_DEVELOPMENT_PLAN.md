@@ -654,44 +654,86 @@ make test lab=6_2
 8. `fs: pin file server and protect device access`
 9. `docs: record smp implementation and test results`
 
-## 8. 最终实现与测试记录
+## 8. 最终实现记录、测试验证与提交说明
 
-### 锁设计
+本节作为最终交付记录，和 `VALIDATION.md` 的复现命令配套使用。
 
-- `console_lock` 保护串口输出，避免多核 `printk` 交错。
-- `env_sched_lock` 保护 `env_sched_list`、`env_running`、`env_cpu_id` 和 IPC 阻塞/唤醒状态。
-- `pmap_lock` 保护 `page_free_list`、页表项和 `pp_ref`；TLB shootdown 在释放页表锁后执行，避免 IPI 等待时死锁。
-- `asid_lock` 保护 ASID bitmap 分配和释放。
+### 8.1 实现记录
 
-### IPI mailbox
+启动与每核状态：
 
-- 默认 QEMU `24Kc` Malta 环境未提供任务文档中的 IPI MMIO 块，因此当前实现使用共享内存 mailbox 模拟同一协议。
-- mailbox slot 0 保存函数指针，slot 1/2 保存两个参数；`IPI_CALL` 触发远端执行，`ipi_done[cpu]` 用于同步等待。
-- 调度入口、timer 路径和从核早期等待路径都会处理 pending IPI，保证 TLB shootdown 等远端调用不会被用户态执行长期饿死。
+- `Makefile` 默认 QEMU 参数使用 `-smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot`，满足至少两个 MIPS CPU 的启动要求。
+- `init/start.S` 区分 CPU0 和从核路径；CPU0 完成内核初始化，从核进入独立启动等待路径并最终跳转 `smp_secondary_start`。
+- `include/smp.h` 和 `kern/smp.c` 提供 `cpu_data[NR_CPUS]`、`cpu_id()`、`cpu_curenv()`、`cpu_cur_pgdir()`、`cpu_kstack_top()`、`cpu_trapframe()` 等每核状态接口。
+- `kern/printk.c` 在每条 `printk` 前输出 `[cpu]` 前缀，日志可直接确认当前 CPU。
 
-### 调度策略
+IPI、异常与 timer：
 
-- 每个 CPU 使用 `cpu_data[cpu_id()].sched_count` 作为独立时间片。
-- 调度器持 `env_sched_lock` 遍历 runnable 队列，跳过正在其他 CPU 上运行的 env，防止同一 env 被双核运行。
-- CPU1 初始化完成后先处理早期 IPI，等 CPU0 首次进入调度路径后直接进入 `schedule(0)`；timer interrupt 后续继续触发抢占调度。
-- `env_pinned_cpu` 支持 CPU 绑定；`fs_serv` 固定在 CPU0，普通用户进程不绑定，可在两个 CPU 上调度。
+- `kern/smp.c` 实现 IPI mailbox、`smp_group_function_call()`、`handle_ipi_irq()`、`handle_timer_irq()` 和从核上线流程。
+- 默认 QEMU `24Kc` Malta 环境未提供任务文档中的 IPI MMIO 块，因此当前实现使用共享内存 mailbox 模拟同一协议；若环境提供 MMIO IPI，可通过 `SMP_USE_MMIO_IPI=1` 切换到 `include/malta.h` 中的寄存器宏。
+- `kern/genex.S` 的 interrupt handler 区分 IPI 与 timer interrupt；timer 路径重置 Compare 后进入调度入口。
+- 每核 Trapframe 通过 `cpu_trapframe()` 定位到当前 CPU 的内核栈顶部，syscall、TLB Mod 和 trap 路径不再共享单核栈帧。
 
-### FS 与 shell 策略
+内存管理与 TLB 同步：
 
-- 文件系统服务端固定 CPU0 运行，保持 block cache、bitmap、open table 和 IDE PIO 的单服务者语义。
-- 其他 CPU 上的用户进程通过 IPC 请求 FS 服务；IPC 发送先完成共享页映射，再将接收方放回 runnable 队列，避免接收方抢先看到半完成请求。
-- `sys_cgetc` 保持非阻塞读取，用户态 console read 在无输入时 `yield`，避免 shell 等待输入时独占 CPU。
+- `kern/pmap.c` 用 `pmap_lock` 保护 `page_free_list`、页表项与 `pp_ref`，并在释放锁后执行 TLB invalidate，避免持页表锁等待 IPI 造成死锁。
+- `kern/env.c` 用 `asid_lock` 保护 ASID bitmap 分配和释放。
+- `kern/tlbex.c` 拆分 `tlb_invalidate_local()` 和 `tlb_invalidate()`；后者在 SMP 启动后通过 `smp_group_function_call()` 广播 TLB shootdown。
 
-### 测试结果
+多核调度与进程状态：
 
-已在 2 核 QEMU Malta (`-smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot`) 下完成以下验证：
+- `include/env.h` 增加 `env_cpu_id`、`env_running`、`env_pinned_cpu`。
+- `kern/sched.c` 用每核 `sched_count` 维护时间片，持 `env_sched_lock` 遍历 runnable 队列，跳过正在其他 CPU 上运行或不符合 CPU 绑定的 env。
+- IPC 阻塞/唤醒和 env 状态变更在 `kern/syscall_all.c` 中持 `env_sched_lock`，先完成共享页映射再唤醒接收方。
 
-- `make -s test lab=1_2`
-- `make -s test lab=2_1`、`2_2`、`2_3`
-- `make -s test lab=3_1`、`3_2`、`3_3`、`3_4`
-- `make -s test lab=4_1` 到 `4_7`
-- `make -s test lab=5_1` 到 `5_5`
-- `make -s test lab=6_1`、`6_2`
+文件系统、设备与 shell：
+
+- `env_create_named("fs_serv", ...)` 将 FS 服务进程固定在 CPU0；普通用户进程不绑定，可在 CPU0/CPU1 调度。
+- FS 服务端固定 CPU0 运行，保持 block cache、bitmap、open table 和 IDE PIO 的单服务者语义。
+- `console_lock` 保护串口输出、`sys_putchar`、`sys_print_cons`、`sys_cgetc` 和串口 `sys_*_dev` 路径。
+- `ide_dev_lock` 保护 IDE MMIO 直接 syscall 路径，防止用户态设备访问与 FS/IDE PIO 并发冲突。
+- `sys_cgetc` 在无输入时预置 syscall 返回值 0 后 `schedule(1)`，保持非阻塞 ABI，同时避免 shell 等待输入时单核独占。
+
+### 8.2 锁归属
+
+| 锁 | 位置 | 保护对象 |
+| --- | --- | --- |
+| `console_lock` | `kern/printk.c` | 串口输出、控制台输入与串口 MMIO syscall |
+| `ide_dev_lock` | `kern/syscall_all.c` | IDE MMIO syscall |
+| `env_sched_lock` | `kern/sched.c` | 调度队列、`env_running`、`env_cpu_id`、IPC 阻塞/唤醒 |
+| `pmap_lock` | `kern/pmap.c` | 物理页空闲链表、页表项、页引用计数 |
+| `asid_lock` | `kern/env.c` | ASID bitmap |
+| `ipi_mailbox_lock[cpu]` | `kern/smp.c` | 单个目标 CPU 的 IPI mailbox |
+
+### 8.3 测试验证记录
+
+最近一次完整验证日期：2026-06-04。
+
+验证环境：2 核 QEMU Malta (`-smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot`)。
+
+已通过项目：
+
 - `make -s all`
+- 全量 lab 构建回归：`lab=1_2`、`2_1`、`2_2`、`2_3`、`3_1`、`3_2`、`3_3`、`3_4`、`4_1`、`4_2`、`4_3`、`4_4`、`4_5`、`4_6`、`4_7`、`5_1`、`5_2`、`5_3`、`5_4`、`5_5`、`6_1`、`6_2`
+- 默认双核/IPI 启动：`timeout 12s make run`
+- 阶段 7 设备 syscall 验证：`make -s test lab=5_1` 后运行 `printf 'abcdefghijklmn\r' | timeout 20s make run`
+- shell/FS/脚本验证：`make -s test lab=6_2` 后运行 `printf 'ls\ncat motd\ncat script\nsh testshell.sh\n' | timeout 30s make run`
+- 静态收尾检查：`rg` 临时日志检查、阶段 7 锁路径检查、`git diff --check`
+
+关键通过输出：
+
 - 默认 `make run` 输出 `[1] slave online`，并完成 100 次 IPI 调用测试：`cpu1 seen = 42 count = 100`。
-- `lab=6_2` shell 手工测试通过：`ls`、`cat motd`、`cat script`、`sh testshell.sh` 均可执行并输出预期内容。
+- `lab=5_1` 输出 `syscall_read_dev is good` 和 `dev address is ok`，表示设备 syscall 地址校验与串口读写路径通过。
+- `lab=6_2` shell 输出 `MOS Shell 2024`，`ls` 能列出 `testshell.sh`、`script`、`motd` 等文件；`cat motd`、`cat script`、`sh testshell.sh` 输出预期内容。
+- shell 运行日志中用户进程销毁/运行输出同时出现 `[0]` 和 `[1]`，说明普通用户进程在两个 CPU 上调度。
+
+说明：
+
+- `timeout` 包住的 QEMU 运行在关键输出出现后可能以 124 退出，这是测试脚本主动结束 QEMU 的预期现象。
+- 验证后已执行 `make clean` 清理构建产物；最终提交前只应保留源码和文档改动。
+
+### 8.4 文档整理
+
+- `README.md`：环境配置、工具链检查与文档入口。
+- `SMP_DEVELOPMENT_PLAN.md`：分阶段计划、最终实现记录、锁归属、验证结果与提交说明。
+- `VALIDATION.md`：可复现验证命令、预期输出、task 要求对应检查表、最近一次最终验证记录。

@@ -1,6 +1,5 @@
 #include <env.h>
 #include <io.h>
-#include <malta.h>
 #include <mmu.h>
 #include <pmap.h>
 #include <printk.h>
@@ -9,16 +8,6 @@
 #include <spinlock.h>
 #include <syscall.h>
 
-/* SMP 阶段 7: IDE 设备访问锁，防止多核同时操作 IDE 寄存器。
- * 虽然 FS 服务固定在 CPU0，但其他进程可能通过 sys_write_dev/sys_read_dev
- * 直接访问 IDE 设备，此锁提供内核级保护。 */
-static spinlock_t ide_lock = SPINLOCK_INIT;
-
-/* 检查物理地址是否在 IDE 设备寄存器范围内。 */
-static inline int is_ide_addr(u_long pa) {
-	return (pa >= MALTA_IDE_BASE && pa < MALTA_IDE_BASE + 0x8);
-}
-
 /* Overview:
  * 	This function is used to print a character on screen.
  *
@@ -26,7 +15,9 @@ static inline int is_ide_addr(u_long pa) {
  * 	`c` is the character you want to print.
  */
 void sys_putchar(int c) {
+	spin_lock(&console_lock);
 	printcharc((char)c);
+	spin_unlock(&console_lock);
 	return;
 }
 
@@ -41,9 +32,11 @@ int sys_print_cons(const void *s, u_int num) {
 		return -E_INVAL;
 	}
 	u_int i;
+	spin_lock(&console_lock);
 	for (i = 0; i < num; i++) {
 		printcharc(((char *)s)[i]);
 	}
+	spin_unlock(&console_lock);
 	return 0;
 }
 
@@ -485,7 +478,17 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 }
 
 int sys_cgetc(void) {
-	return scancharc();
+	int c;
+
+	spin_lock(&console_lock);
+	c = scancharc();
+	spin_unlock(&console_lock);
+	if (c == 0 && cpu_curenv() != NULL) {
+		/* Preserve the non-blocking cgetc ABI while yielding this CPU to other envs. */
+		cpu_trapframe()->regs[2] = 0;
+		schedule(1);
+	}
+	return c;
 }
 
 /* Overview:
@@ -522,6 +525,7 @@ int sys_cgetc(void) {
 int valid_addr_space_num = 2;
 unsigned int valid_addr_start[2] = {0x180003f8, 0x180001f0};
 unsigned int valid_addr_end[2] = {0x180003f8 + 0x20, 0x180001f8};
+static spinlock_t ide_dev_lock = SPINLOCK_INIT;
 
 static inline int is_illegal_dev_range(u_long pa, u_long len) {
 	if ((pa % 4 != 0 && len != 1 && len != 2) || (pa % 2 != 0 && len != 1)) {
@@ -537,14 +541,28 @@ static inline int is_illegal_dev_range(u_long pa, u_long len) {
 	}
 	return 1;
 }
+
+static inline spinlock_t *dev_lock_for_pa(u_long pa) {
+	if (pa >= valid_addr_start[0] && pa < valid_addr_end[0]) {
+		return &console_lock;
+	}
+	if (pa >= valid_addr_start[1] && pa < valid_addr_end[1]) {
+		return &ide_dev_lock;
+	}
+	return NULL;
+}
+
 int sys_write_dev(u_int va, u_int pa, u_int len) {
+	spinlock_t *lock;
+
 	/* Exercise 5.1: Your code here. (1/2) */
-	if (is_illegal_va_range(va, len) || is_illegal_dev_range(pa, len) || va % len != 0) {
+	if ((len != 1 && len != 2 && len != 4) || is_illegal_va_range(va, len) ||
+	    is_illegal_dev_range(pa, len) || va % len != 0) {
 		return -E_INVAL;
 	}
-	/* SMP 阶段 7: IDE 访问持锁保护。 */
-	if (is_ide_addr(pa)) {
-		spin_lock(&ide_lock);
+	lock = dev_lock_for_pa(pa);
+	if (lock) {
+		spin_lock(lock);
 	}
 	if (len == 4) {
 		iowrite32(*(uint32_t *)va, pa);
@@ -552,14 +570,9 @@ int sys_write_dev(u_int va, u_int pa, u_int len) {
 		iowrite16(*(uint16_t *)va, pa);
 	} else if (len == 1) {
 		iowrite8(*(uint8_t *)va, pa);
-	} else {
-		if (is_ide_addr(pa)) {
-			spin_unlock(&ide_lock);
-		}
-		return -E_INVAL;
 	}
-	if (is_ide_addr(pa)) {
-		spin_unlock(&ide_lock);
+	if (lock) {
+		spin_unlock(lock);
 	}
 	return 0;
 }
@@ -580,13 +593,16 @@ int sys_write_dev(u_int va, u_int pa, u_int len) {
  *  You can use function 'ioread32', 'ioread16' and 'ioread8' to read data from device.
  */
 int sys_read_dev(u_int va, u_int pa, u_int len) {
+	spinlock_t *lock;
+
 	/* Exercise 5.1: Your code here. (2/2) */
-	if (is_illegal_va_range(va, len) || is_illegal_dev_range(pa, len) || va % len != 0) {
+	if ((len != 1 && len != 2 && len != 4) || is_illegal_va_range(va, len) ||
+	    is_illegal_dev_range(pa, len) || va % len != 0) {
 		return -E_INVAL;
 	}
-	/* SMP 阶段 7: IDE 访问持锁保护。 */
-	if (is_ide_addr(pa)) {
-		spin_lock(&ide_lock);
+	lock = dev_lock_for_pa(pa);
+	if (lock) {
+		spin_lock(lock);
 	}
 	if (len == 4) {
 		*(uint32_t *)va = ioread32(pa);
@@ -594,14 +610,9 @@ int sys_read_dev(u_int va, u_int pa, u_int len) {
 		*(uint16_t *)va = ioread16(pa);
 	} else if (len == 1) {
 		*(uint8_t *)va = ioread8(pa);
-	} else {
-		if (is_ide_addr(pa)) {
-			spin_unlock(&ide_lock);
-		}
-		return -E_INVAL;
 	}
-	if (is_ide_addr(pa)) {
-		spin_unlock(&ide_lock);
+	if (lock) {
+		spin_unlock(lock);
 	}
 	return 0;
 }

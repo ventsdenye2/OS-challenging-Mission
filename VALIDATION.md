@@ -171,7 +171,58 @@ Ctrl + A
 X
 ```
 
-## 5. Task 要求对应检查表
+## 5. 阶段 7 设备 syscall 与控制台等待验证
+
+用途：覆盖阶段 7 杨璞负责的设备 syscall 串行化与 `sys_cgetc` 等待让出路径。
+
+设备 syscall 验证：
+
+```bash
+make -s test lab=5_1
+printf 'abcdefghijklmn\r' | timeout 20s make run
+```
+
+预期关键输出：
+
+```text
+devtst begin
+syscall_read_dev is good
+end of devtst
+dev address is ok
+```
+
+判定标准：
+
+- `sys_read_dev`/`sys_write_dev` 的串口路径可以正常读写。
+- 无非法设备地址误放行，过程中无 panic。
+- `timeout` 到时结束 QEMU 时可能返回 124；只要上述关键输出已出现即可。
+
+shell 控制台等待验证：
+
+```bash
+make -s test lab=6_2
+printf 'ls\ncat motd\ncat script\nsh testshell.sh\n' | timeout 30s make run
+```
+
+判定标准：
+
+- shell 能进入 `$` 提示符并执行输入的命令。
+- 能看到 `motd`、`script`、`testshell.sh` 等文件输出。
+- `sh testshell.sh` 输出 `lorem` 内容，等待输入期间无单核独占导致的卡死或 panic。
+
+静态补充检查：
+
+```bash
+rg -n "console_lock|ide_dev_lock|dev_lock_for_pa|cpu_trapframe\\(\\)->regs\\[2\\] = 0|schedule\\(1\\)" include/printk.h kern/printk.c kern/syscall_all.c
+```
+
+预期结果：
+
+- `console_lock` 为共享串口锁，`sys_print_cons`、`sys_putchar`、`sys_cgetc` 和串口 `sys_*_dev` 路径复用该锁。
+- IDE 设备地址对应 `ide_dev_lock`。
+- `sys_cgetc` 在无输入时先写回返回值 0，再 `schedule(1)` 让出 CPU。
+
+## 6. Task 要求对应检查表
 
 | `task.md` 要求 | 验证方法 | 通过标准 |
 | --- | --- | --- |
@@ -180,18 +231,66 @@ X
 | 支持启动 SHELL | `make -s test lab=6_2 && make run` | 出现 `MOS Shell 2024` 与 `$` 提示符 |
 | 进程在多核上调度 | shell/测试运行日志 | 用户进程销毁、运行日志中出现 `[0]` 和 `[1]` |
 | 支持多核内存读写和 TLB 同步 | lab4/lab6 构建回归，shell 命令运行 | `lab=4_5`、`lab=6_1`、`lab=6_2` 构建通过，shell 命令无 panic |
+| 设备 syscall 串行化与控制台等待 | `lab=5_1` 设备验证、`lab=6_2` shell 管线验证、静态补充检查 | 串口/IDE MMIO 有对应锁，`sys_cgetc` 无输入时让出 CPU，运行无 panic |
 | 文件系统可用 | shell 中运行 `ls`、`cat motd`、`cat script` | 文件可列出、可读取 |
 | 基本脚本/管道/重定向 | shell 中运行 `sh testshell.sh` | 脚本输出 lorem 内容，过程中无 panic |
 | 实现文档 | 查看 `SMP_DEVELOPMENT_PLAN.md` 第 8 节 | 包含锁设计、IPI mailbox、调度策略、FS 策略、测试结果 |
 
-## 6. 推荐最终提交前检查
+## 7. 推荐最终提交前检查
 
 ```bash
 rg -n "TODO SMP|phase 7|ipc_try_send from|serve req|serve_open from|read_block [0-9].*(alloc|done|ide_read)" include kern fs user init SMP_DEVELOPMENT_PLAN.md task.md README.md
+rg -n "console_lock|ide_dev_lock|dev_lock_for_pa|cpu_trapframe\\(\\)->regs\\[2\\] = 0|schedule\\(1\\)" include/printk.h kern/printk.c kern/syscall_all.c
+git diff --check
 git status --short
 ```
 
 预期结果：
 
 - 第一条命令不应输出临时调试日志或未完成的 SMP TODO。
-- 第二条命令会显示源码/文档变化，以及构建后生成产物变化；构建产物变化属于正常现象。
+- 第二条命令应能定位阶段 7 新增的串口/IDE 锁和 `sys_cgetc` 让出逻辑。
+- 第三条命令不应输出空白或格式问题。
+- 第四条命令会显示源码/文档变化，以及构建后生成产物变化；构建产物变化属于正常现象。
+
+## 8. 最近一次最终验证记录
+
+验证日期：2026-06-04。
+
+验证环境：
+
+```text
+QEMU Malta, 2 CPUs, -smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot
+```
+
+已执行并通过：
+
+```bash
+make -s all
+
+for lab in 1_2 2_1 2_2 2_3 3_1 3_2 3_3 3_4 4_1 4_2 4_3 4_4 4_5 4_6 4_7 5_1 5_2 5_3 5_4 5_5 6_1 6_2; do
+    make -s test lab=$lab || exit 1
+done
+
+make clean
+make -s all
+timeout 12s make run
+
+make -s test lab=5_1
+printf 'abcdefghijklmn\r' | timeout 20s make run
+
+make -s test lab=6_2
+printf 'ls\ncat motd\ncat script\nsh testshell.sh\n' | timeout 30s make run
+
+rg -n "TODO SMP|phase 7|ipc_try_send from|serve req|serve_open from|read_block [0-9].*(alloc|done|ide_read)" include kern fs user init SMP_DEVELOPMENT_PLAN.md task.md README.md
+rg -n "console_lock|ide_dev_lock|dev_lock_for_pa|cpu_trapframe\\(\\)->regs\\[2\\] = 0|schedule\\(1\\)" include/printk.h kern/printk.c kern/syscall_all.c
+git diff --check
+make clean
+```
+
+关键结果：
+
+- 全量 lab 构建回归退出码为 0。
+- 默认 `make run` 输出 `[1] slave online`、`ipi call on cpu 1 value 42 count 100`、`cpu1 seen = 42 count = 100`。
+- `lab=5_1` 输出 `syscall_read_dev is good`、`end of devtst`、`dev address is ok`。
+- `lab=6_2` 输出 shell banner、文件列表、`motd`、`script` 和 `lorem` 内容；运行日志中能看到 `[0]` 与 `[1]` 用户进程输出。
+- 临时调试日志检查无输出；阶段 7 锁路径检查能定位 `console_lock`、`ide_dev_lock` 和 `sys_cgetc` 让出逻辑；`git diff --check` 无输出。
