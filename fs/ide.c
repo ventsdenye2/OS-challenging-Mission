@@ -3,13 +3,18 @@
  */
 
 /* SMP FS 策略：
- * IDE PIO 只由固定在 CPU0 的 fs_serv 访问，避免多个 CPU 同时操作 IDE 寄存器。 */
+ * IDE PIO 只由固定在 CPU0 的 fs_serv 访问，避免多个 CPU 同时操作 IDE 寄存器。
+ * ide_lock 提供额外防护，防止 syscall/dev 路径被其他进程直接调用。
+ * 内核级 ide_lock（在 kern/syscall_all.c）提供硬件级 IDE 寄存器保护。 */
 
 #include "serv.h"
 #include <lib.h>
 #include <malta.h>
 #include <mmu.h>
 #include <smp.h>
+
+/* IDE 操作锁：保护 ide_read/ide_write 的完整操作序列。 */
+static user_spinlock_t ide_lock = USER_SPINLOCK_INIT;
 
 /* Overview:
  *   Wait for the IDE device to complete previous requests and be ready
@@ -48,6 +53,8 @@ void ide_read(u_int diskno, u_int secno, void *dst, u_int nsecs) {
 	uint8_t temp;
 	u_int offset = 0, max = nsecs + secno;
 	panic_on(diskno >= 2);
+
+	user_spin_lock(&ide_lock);
 
 	// Read the sector in turn
 	while (secno < max) {
@@ -93,6 +100,7 @@ void ide_read(u_int diskno, u_int secno, void *dst, u_int nsecs) {
 		offset += SECT_SIZE;
 		secno += 1;
 	}
+	user_spin_unlock(&ide_lock);
 }
 
 /* Overview:
@@ -114,6 +122,8 @@ void ide_write(u_int diskno, u_int secno, void *src, u_int nsecs) {
 	uint8_t temp;
 	u_int offset = 0, max = nsecs + secno;
 	panic_on(diskno >= 2);
+
+	user_spin_lock(&ide_lock);
 
 	// Write the sector in turn
 	while (secno < max) {
@@ -166,4 +176,5 @@ void ide_write(u_int diskno, u_int secno, void *src, u_int nsecs) {
 		offset += SECT_SIZE;
 		secno += 1;
 	}
+	user_spin_unlock(&ide_lock);
 }

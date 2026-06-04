@@ -4,7 +4,13 @@
 
 /* SMP FS 策略：
  * 文件系统服务进程固定在 CPU0 运行，因此 block cache、bitmap 和文件元数据
- * 由单个 FS 服务端串行修改；其他用户进程通过 IPC 请求 FS 服务。 */
+ * 由单个 FS 服务端串行修改；其他用户进程通过 IPC 请求 FS 服务。
+ *
+ * SMP 阶段 7: fs_lock 提供额外防护，保护 bitmap、block cache 和文件元数据。
+ * 锁定义和用户态自旋锁原语在 serv.h 中。 */
+
+/* FS 全局锁：保护 block cache、bitmap 和文件元数据的并发修改。 */
+user_spinlock_t fs_lock = USER_SPINLOCK_INIT;
 
 struct Super *super;
 
@@ -350,9 +356,11 @@ void check_write_block(void) {
 //  2. check if the disk can work.
 //  3. read bitmap blocks from disk to memory.
 void fs_init(void) {
+	user_spin_lock(&fs_lock);
 	read_super();
 	check_write_block();
 	read_bitmap();
+	user_spin_unlock(&fs_lock);
 }
 
 // Overview:
@@ -776,11 +784,13 @@ void file_flush(struct File *f) {
 //  Sync the entire file system.  A big hammer.
 void fs_sync(void) {
 	int i;
+	user_spin_lock(&fs_lock);
 	for (i = 0; i < super->s_nblocks; i++) {
 		if (block_is_dirty(i)) {
 			write_block(i);
 		}
 	}
+	user_spin_unlock(&fs_lock);
 }
 
 // Overview:

@@ -20,6 +20,9 @@ static void fs_check() {
 	void *blk;
 	u_int *bits;
 
+	/* SMP 阶段 7: 持 fs_lock 保护 FS 内部数据结构。 */
+	user_spin_lock(&fs_lock);
+
 	// back up bitmap
 	if ((r = syscall_mem_alloc(0, (void *)PTMAP, PTE_D)) < 0) {
 		user_panic("syscall_mem_alloc: %d", r);
@@ -85,6 +88,8 @@ static void fs_check() {
 	file_flush(f);
 	file_close(f);
 	debugf("file rewrite is good\n");
+
+	user_spin_unlock(&fs_lock);
 }
 
 int main() {

@@ -382,12 +382,18 @@ void serve(void) {
 			continue;
 		}
 
+		/* SMP 阶段 7: 持 fs_lock 保护整个 FS 操作，确保 block cache、
+		 * bitmap 和文件元数据在操作期间不被并发修改。 */
+		user_spin_lock(&fs_lock);
+
 		// Select the serve function and call it.
 		func = serve_table[req];
 		func(whom, REQVA);
 
 		// Unmap the argument page.
 		panic_on(syscall_mem_unmap(0, (void *)REQVA));
+
+		user_spin_unlock(&fs_lock);
 	}
 }
 

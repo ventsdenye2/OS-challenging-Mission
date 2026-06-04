@@ -1,11 +1,23 @@
 #include <env.h>
 #include <io.h>
+#include <malta.h>
 #include <mmu.h>
 #include <pmap.h>
 #include <printk.h>
 #include <sched.h>
 #include <smp.h>
+#include <spinlock.h>
 #include <syscall.h>
+
+/* SMP 阶段 7: IDE 设备访问锁，防止多核同时操作 IDE 寄存器。
+ * 虽然 FS 服务固定在 CPU0，但其他进程可能通过 sys_write_dev/sys_read_dev
+ * 直接访问 IDE 设备，此锁提供内核级保护。 */
+static spinlock_t ide_lock = SPINLOCK_INIT;
+
+/* 检查物理地址是否在 IDE 设备寄存器范围内。 */
+static inline int is_ide_addr(u_long pa) {
+	return (pa >= MALTA_IDE_BASE && pa < MALTA_IDE_BASE + 0x8);
+}
 
 /* Overview:
  * 	This function is used to print a character on screen.
@@ -530,6 +542,10 @@ int sys_write_dev(u_int va, u_int pa, u_int len) {
 	if (is_illegal_va_range(va, len) || is_illegal_dev_range(pa, len) || va % len != 0) {
 		return -E_INVAL;
 	}
+	/* SMP 阶段 7: IDE 访问持锁保护。 */
+	if (is_ide_addr(pa)) {
+		spin_lock(&ide_lock);
+	}
 	if (len == 4) {
 		iowrite32(*(uint32_t *)va, pa);
 	} else if (len == 2) {
@@ -537,7 +553,13 @@ int sys_write_dev(u_int va, u_int pa, u_int len) {
 	} else if (len == 1) {
 		iowrite8(*(uint8_t *)va, pa);
 	} else {
+		if (is_ide_addr(pa)) {
+			spin_unlock(&ide_lock);
+		}
 		return -E_INVAL;
+	}
+	if (is_ide_addr(pa)) {
+		spin_unlock(&ide_lock);
 	}
 	return 0;
 }
@@ -562,6 +584,10 @@ int sys_read_dev(u_int va, u_int pa, u_int len) {
 	if (is_illegal_va_range(va, len) || is_illegal_dev_range(pa, len) || va % len != 0) {
 		return -E_INVAL;
 	}
+	/* SMP 阶段 7: IDE 访问持锁保护。 */
+	if (is_ide_addr(pa)) {
+		spin_lock(&ide_lock);
+	}
 	if (len == 4) {
 		*(uint32_t *)va = ioread32(pa);
 	} else if (len == 2) {
@@ -569,7 +595,13 @@ int sys_read_dev(u_int va, u_int pa, u_int len) {
 	} else if (len == 1) {
 		*(uint8_t *)va = ioread8(pa);
 	} else {
+		if (is_ide_addr(pa)) {
+			spin_unlock(&ide_lock);
+		}
 		return -E_INVAL;
+	}
+	if (is_ide_addr(pa)) {
+		spin_unlock(&ide_lock);
 	}
 	return 0;
 }
