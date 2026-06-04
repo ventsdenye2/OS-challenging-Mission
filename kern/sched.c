@@ -2,15 +2,20 @@
 #include <pmap.h>
 #include <printk.h>
 #include <smp.h>
+#include <spinlock.h>
 
-/* TODO SMP phase 6:
- * - 'static int count' 改为每核 cpu_data[cpu_id()].sched_count。
- * - env_sched_list 遍历需持 env_sched_lock。
- * - 跳过 env_running == 1 且 env_cpu_id != cpu_id() 的 env。
- * - 选中后设置 env_running = 1、env_cpu_id = cpu_id()。 */
+/* SMP 阶段 6: 调度队列锁，保护 env_sched_list 和 env_running/env_cpu_id 字段。 */
+spinlock_t env_sched_lock = SPINLOCK_INIT;
 
 /* Overview:
  *   Implement a round-robin scheduling to select a runnable env and schedule it using 'env_run'.
+ *
+ *   SMP 阶段 6 变更:
+ *   - 用 cpu_data[cpu_id()].sched_count 替代 static int count。
+ *   - 遍历 env_sched_list 时持 env_sched_lock。
+ *   - 跳过 env_running == 1 且 env_cpu_id != cpu_id() 的 env。
+ *   - 选中后设置 env_running = 1、env_cpu_id = cpu_id()。
+ *   - 换下当前 env 时清除其 env_running 标记。
  *
  * Post-Condition:
  *   If 'yield' is set (non-zero), 'curenv' should not be scheduled again unless it is the only
@@ -22,10 +27,13 @@
  *   3. You shouldn't use any 'return' statement because this function is 'noreturn'.
  */
 void schedule(int yield) {
-	static int count = 0; // remaining time slices of current env
+	int cpu = cpu_id();
+	int count = cpu_data[cpu].sched_count;
 	struct Env *e = cpu_curenv();
 
 	smp_note_schedule_ready();
+
+	spin_lock(&env_sched_lock);
 
 	/* We always decrease the 'count' by 1.
 	 *
@@ -40,21 +48,50 @@ void schedule(int yield) {
 	 *
 	 * Otherwise, we simply schedule 'e' again.
 	 *
-	 * You may want to use macros below:
-	 *   'TAILQ_FIRST', 'TAILQ_REMOVE', 'TAILQ_INSERT_TAIL'
+	 * SMP 阶段 6: 所有 env_sched_list 的遍历和修改都在 env_sched_lock 保护下进行。
+	 * 如果当前 CPU 找不到可调度的 env，则自旋等待直到有可用 env。
 	 */
-	/* Exercise 3.12: Your code here. */
 	if (yield || count == 0 || e == NULL || e->env_status != ENV_RUNNABLE) {
-		if (e != NULL && e->env_status == ENV_RUNNABLE) {
-			TAILQ_REMOVE(&env_sched_list, e, env_sched_link);
-			TAILQ_INSERT_TAIL(&env_sched_list, e, env_sched_link);
+		if (e != NULL) {
+			/* Clear the old env's running state before picking a new one. */
+			e->env_running = 0;
+			e->env_cpu_id = -1;
+
+			/* If still runnable, move to tail of sched list for fairness. */
+			if (e->env_status == ENV_RUNNABLE) {
+				TAILQ_REMOVE(&env_sched_list, e, env_sched_link);
+				TAILQ_INSERT_TAIL(&env_sched_list, e, env_sched_link);
+			}
 		}
-		e = TAILQ_FIRST(&env_sched_list);
-		if (e == NULL) {
-			panic("schedule: no runnable envs\n");
+
+		/* Pick a new env from the head of env_sched_list.
+		 * Skip envs that are already running on another CPU. */
+		while (1) {
+			e = TAILQ_FIRST(&env_sched_list);
+			while (e != NULL) {
+				if (e->env_running == 0 || e->env_cpu_id == cpu) {
+					goto found;
+				}
+				e = TAILQ_NEXT(e, env_sched_link);
+			}
+			/* No runnable env available for this CPU.
+			 * Release lock briefly to let other CPUs make progress. */
+			spin_unlock(&env_sched_lock);
+			for (int i = 0; i < 100; i++) {
+				__asm__ volatile("nop");
+			}
+			spin_lock(&env_sched_lock);
 		}
+	found:
+		/* Mark the newly selected env as running on this CPU. */
+		e->env_running = 1;
+		e->env_cpu_id = cpu;
 		count = e->env_pri;
 	}
+
 	count--;
+	cpu_data[cpu].sched_count = count;
+
+	spin_unlock(&env_sched_lock);
 	env_run(e);
 }

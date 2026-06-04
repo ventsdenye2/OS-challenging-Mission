@@ -20,6 +20,7 @@
 
 #ifndef __ASSEMBLER__
 
+#include <spinlock.h>
 #include <types.h>
 
 /* Env 在 env.h 中定义，这里只需要指针类型，避免头文件互相包含。 */
@@ -31,6 +32,7 @@ struct cpu_local_data {
 	struct Env *curenv;	      /* 当前 CPU 正在运行的进程。 */
 	Pde *cur_pgdir;		      /* 当前 CPU 使用的页目录。 */
 	u_long kernel_stack_top;      /* 当前 CPU 的内核栈顶。 */
+	int sched_count;	      /* 每核调度剩余时间片数（阶段 6）。 */
 };
 
 /* 所有 CPU 的 per-cpu 状态表。 */
@@ -60,6 +62,10 @@ void handle_ipi_irq(void);
 void handle_timer_irq(void);
 /* 标记 CPU0 已经进入调度路径，timer interrupt 可以触发 schedule。 */
 void smp_note_schedule_ready(void);
+
+/* 调度队列锁（阶段 6），保护 env_sched_list 和 env_running/env_cpu_id 字段。
+ * 定义在 kern/sched.c，由 kern/syscall_all.c 和 kern/env.c 共用。 */
+extern spinlock_t env_sched_lock;
 
 /* TLB 失效操作（阶段 3 提供签名，阶段 5 启用广播）。
  * tlb_invalidate_local: 仅使本地 TLB 条目失效。

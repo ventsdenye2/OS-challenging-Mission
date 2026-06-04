@@ -14,9 +14,8 @@ struct Env *curenv = NULL;	      // the current env
 static struct Env_list env_free_list; // Free list
 
 // Invariant: 'env' in 'env_sched_list' iff. 'env->env_status' is 'RUNNABLE'.
+// SMP 阶段 6: 所有对 env_sched_list 的修改均需持 env_sched_lock（定义在 kern/sched.c）。
 struct Env_sched_list env_sched_list; // Runnable list
-
-/* TODO SMP phase 6: 增加 env_sched_lock 保护 env_sched_list 的并发修改。 */
 
 static Pde *base_pgdir;
 
@@ -413,8 +412,6 @@ struct Env *env_create(const void *binary, size_t size, int priority) {
  *  Free env e and all memory it uses.
  */
 void env_free(struct Env *e) {
-	/* TODO SMP phase 6: env_free 可能被其他 CPU 调用释放正在运行的 env，
-	 * 需要持 env_sched_lock 检查 env_running 标记。 */
 	Pte *pt;
 	u_int pdeno, pteno, pa;
 
@@ -449,17 +446,34 @@ void env_free(struct Env *e) {
 	asid_free(e->env_asid);
 	/* Hint: invalidate page directory in TLB */
 	tlb_invalidate(e->env_asid, UVPT + (PDX(UVPT) << PGSHIFT));
-	/* Hint: return the environment to the free list. */
+	/* Hint: return the environment to the free list.
+	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 和 env_running 的并发修改。
+	 * 只从 env_sched_list 移除仍在其中的 env（RUNNABLE 状态的 env 才在列表中）。 */
+	spin_lock(&env_sched_lock);
+	if (e->env_status == ENV_RUNNABLE) {
+		TAILQ_REMOVE(&env_sched_list, (e), env_sched_link);
+	}
 	e->env_status = ENV_FREE;
+	e->env_running = 0;
+	e->env_cpu_id = -1;
 	LIST_INSERT_HEAD((&env_free_list), (e), env_link);
-	TAILQ_REMOVE(&env_sched_list, (e), env_sched_link);
+	spin_unlock(&env_sched_lock);
 }
 
 /* Overview:
  *  Free env e, and schedule to run a new env if e is the current env.
+ *
+ *  SMP 阶段 6:
+ *  - 如果 e 正在其他 CPU 上运行，panic（v1 简化策略），后续可用 IPI 优雅处理。
+ *  - env_free 内部已持 env_sched_lock 处理调度队列的并发访问。
  */
 void env_destroy(struct Env *e) {
-	/* TODO SMP phase 6: 如果 e 在另一个 CPU 上运行，需通过 IPI 让该 CPU 重新调度。 */
+	/* SMP: 如果 e 正在其他 CPU 上运行，不能安全销毁。 */
+	if (e->env_running && e->env_cpu_id != cpu_id()) {
+		panic("env_destroy: env %08x running on CPU %d, cannot destroy from CPU %d\n",
+		      e->env_id, e->env_cpu_id, cpu_id());
+	}
+
 	/* Hint: free e. */
 	env_free(e);
 
@@ -489,7 +503,8 @@ extern void env_pop_tf(struct Trapframe *tf, u_int asid) __attribute__((noreturn
  *   You may use these functions: 'env_pop_tf'.
  */
 void env_run(struct Env *e) {
-	/* TODO SMP phase 6: 需持 env_sched_lock 设置 env_running/env_cpu_id。 */
+	/* SMP 阶段 6: env_running/env_cpu_id 已在 schedule() 中持 env_sched_lock 设置。
+	 * env_run 只负责 per-CPU 状态切换（curenv/cur_pgdir/trapframe），无需额外加锁。 */
 	int cpu = cpu_id();
 	assert(e->env_status == ENV_RUNNABLE);
 	// WARNING BEGIN: DO NOT MODIFY FOLLOWING LINES!

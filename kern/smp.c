@@ -187,6 +187,9 @@ void smp_secondary_start(void) {
 	ipi_ready[cpu] = 1;
 	smp_sync();
 	printk("slave online\n");
+
+	/* SMP 阶段 6: 从核初始化完成后等待 timer 中断触发调度。
+	 * IPI 在中断上下文中处理；调度由 handle_timer_irq 驱动。 */
 	while (1) {
 		if (ipi_pending[cpu] != 0) {
 			handle_ipi_irq();
@@ -232,7 +235,8 @@ void smp_note_schedule_ready(void) {
 
 void handle_timer_irq(void) {
 #if !defined(LAB) || LAB >= 3
-	if (cpu_id() == 0 && timer_schedule_ready) {
+	/* SMP 阶段 6: 所有 CPU 的 timer 中断都触发调度。 */
+	if (timer_schedule_ready) {
 		schedule(0);
 	}
 #endif

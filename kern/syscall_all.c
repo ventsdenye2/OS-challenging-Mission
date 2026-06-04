@@ -302,9 +302,9 @@ int sys_set_env_status(u_int envid, u_int status) {
 
 	try(envid2env(envid, &env, 1));
 
-	/* Step 3: Update 'env_sched_list' if the 'env_status' of 'env' is being changed. */
-	/* Exercise 4.14: Your code here. (3/3) */
-
+	/* Step 3: Update 'env_sched_list' if the 'env_status' of 'env' is being changed.
+	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 的并发修改。 */
+	spin_lock(&env_sched_lock);
 	if (status == ENV_RUNNABLE && env->env_status != ENV_RUNNABLE) {
 		TAILQ_INSERT_TAIL(&env_sched_list, env, env_sched_link);
 	} else if (status == ENV_NOT_RUNNABLE && env->env_status != ENV_NOT_RUNNABLE) {
@@ -313,6 +313,7 @@ int sys_set_env_status(u_int envid, u_int status) {
 
 	/* Step 4: Set the 'env_status' of 'env'. */
 	env->env_status = status;
+	spin_unlock(&env_sched_lock);
 
 	/* Step 5: Use 'schedule' with 'yield' set if ths 'env' is the current CPU's curenv. */
 	if (env == cpu_curenv()) {
@@ -383,11 +384,16 @@ int sys_ipc_recv(u_int dstva) {
 	cpu_curenv()->env_ipc_dstva = dstva;
 
 	/* Step 4: Set the status of 'curenv' to 'ENV_NOT_RUNNABLE' and remove it from
-	 * 'env_sched_list'. */
+	 * 'env_sched_list'.
+	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 的并发修改。 */
 	/* Exercise 4.8: Your code here. (3/8) */
 
+	spin_lock(&env_sched_lock);
 	cpu_curenv()->env_status = ENV_NOT_RUNNABLE;
+	cpu_curenv()->env_running = 0;
+	cpu_curenv()->env_cpu_id = -1;
 	TAILQ_REMOVE(&env_sched_list, cpu_curenv(), env_sched_link);
+	spin_unlock(&env_sched_lock);
 
 	/* Step 5: Give up the CPU and block until a message is received. */
 	cpu_trapframe()->regs[2] = 0;
@@ -440,10 +446,13 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 	e->env_ipc_recving = 0;
 
 	/* Step 5: Set the target's status to 'ENV_RUNNABLE' again and insert it to the tail of
-	 * 'env_sched_list'. */
+	 * 'env_sched_list'.
+	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 的并发修改。 */
 	/* Exercise 4.8: Your code here. (7/8) */
+	spin_lock(&env_sched_lock);
 	e->env_status = ENV_RUNNABLE;
 	TAILQ_INSERT_TAIL(&env_sched_list, e, env_sched_link);
+	spin_unlock(&env_sched_lock);
 
 	/* Step 6: If 'srcva' is not zero, map the page at 'srcva' in 'curenv' to 'e->env_ipc_dstva'
 	 * in 'e'. */
