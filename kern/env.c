@@ -7,6 +7,7 @@
 #include <sched.h>
 #include <smp.h>
 #include <spinlock.h>
+#include <string.h>
 
 struct Env envs[NENV] __attribute__((aligned(PAGE_SIZE))); // All environments
 
@@ -175,6 +176,7 @@ void env_init(void) {
 		envs[i].env_status = ENV_FREE;
 		envs[i].env_cpu_id = -1;
 		envs[i].env_running = 0;
+		envs[i].env_pinned_cpu = -1;
 		LIST_INSERT_HEAD(&env_free_list, &envs[i], env_link);
 	}
 
@@ -279,6 +281,7 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	e->env_runs = 0;	       // for lab6
 	e->env_cpu_id = -1;	       // SMP: not assigned to any CPU yet
 	e->env_running = 0;	       // SMP: not currently running
+	e->env_pinned_cpu = -1;	       // SMP: not pinned to any CPU by default
 	/* Exercise 3.4: Your code here. (3/4) */
 	if ((r = asid_alloc(&e->env_asid)) != 0) {
 		return r;
@@ -387,7 +390,7 @@ static void load_icode(struct Env *e, const void *binary, size_t size) {
  * Hint:
  *   'binary' is an ELF executable image in memory.
  */
-struct Env *env_create(const void *binary, size_t size, int priority) {
+struct Env *env_create_named(const char *name, const void *binary, size_t size, int priority) {
 	struct Env *e;
 	/* Step 1: Use 'env_alloc' to alloc a new env, with 0 as 'parent_id'. */
 	/* Exercise 3.7: Your code here. (1/3) */
@@ -397,6 +400,9 @@ struct Env *env_create(const void *binary, size_t size, int priority) {
 	/* Exercise 3.7: Your code here. (2/3) */
 	e->env_pri = priority;
 	e->env_status = ENV_RUNNABLE;
+	if (strcmp(name, "fs_serv") == 0) {
+		e->env_pinned_cpu = 0;
+	}
 
 	/* Step 3: Use 'load_icode' to load the image from 'binary', and insert 'e' into
 	 * 'env_sched_list' using 'TAILQ_INSERT_HEAD'. */
@@ -406,6 +412,10 @@ struct Env *env_create(const void *binary, size_t size, int priority) {
 	TAILQ_INSERT_HEAD(&env_sched_list, e, env_sched_link);
 
 	return e;
+}
+
+struct Env *env_create(const void *binary, size_t size, int priority) {
+	return env_create_named("", binary, size, priority);
 }
 
 /* Overview:
@@ -456,6 +466,7 @@ void env_free(struct Env *e) {
 	e->env_status = ENV_FREE;
 	e->env_running = 0;
 	e->env_cpu_id = -1;
+	e->env_pinned_cpu = -1;
 	LIST_INSERT_HEAD((&env_free_list), (e), env_link);
 	spin_unlock(&env_sched_lock);
 }

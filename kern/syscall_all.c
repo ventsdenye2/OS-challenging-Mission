@@ -373,22 +373,12 @@ int sys_ipc_recv(u_int dstva) {
 		return -E_INVAL;
 	}
 
-	/* Step 2: Set 'curenv->env_ipc_recving' to 1. */
-	/* Exercise 4.8: Your code here. (1/8) */
-
-	cpu_curenv()->env_ipc_recving = 1;
-
-	/* Step 3: Set the value of 'curenv->env_ipc_dstva'. */
-	/* Exercise 4.8: Your code here. (2/8) */
-
-	cpu_curenv()->env_ipc_dstva = dstva;
-
-	/* Step 4: Set the status of 'curenv' to 'ENV_NOT_RUNNABLE' and remove it from
+	/* Step 2-4: Set the receive state, mark 'curenv' not runnable and remove it from
 	 * 'env_sched_list'.
 	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 的并发修改。 */
-	/* Exercise 4.8: Your code here. (3/8) */
-
 	spin_lock(&env_sched_lock);
+	cpu_curenv()->env_ipc_recving = 1;
+	cpu_curenv()->env_ipc_dstva = dstva;
 	cpu_curenv()->env_status = ENV_NOT_RUNNABLE;
 	cpu_curenv()->env_running = 0;
 	cpu_curenv()->env_cpu_id = -1;
@@ -419,6 +409,8 @@ int sys_ipc_recv(u_int dstva) {
 int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 	struct Env *e;
 	struct Page *p;
+	u_int ipc_perm = 0;
+	int r;
 
 	/* Step 1: Check if 'srcva' is either zero or a legal address. */
 	/* Exercise 4.8: Your code here. (4/8) */
@@ -435,46 +427,53 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 
 	/* Step 3: Check if the target is waiting for a message. */
 	/* Exercise 4.8: Your code here. (6/8) */
+	spin_lock(&env_sched_lock);
 	if (e->env_ipc_recving == 0) {
+		spin_unlock(&env_sched_lock);
 		return -E_IPC_NOT_RECV;
 	}
+	e->env_ipc_recving = 0;
+	spin_unlock(&env_sched_lock);
 
-	/* Step 4: Set the target's ipc fields. */
+	/* Step 4: If 'srcva' is not zero, map the page at 'srcva' in 'curenv' to 'e->env_ipc_dstva'
+	 * in 'e'. */
+	/* Return -E_INVAL if 'srcva' is not zero and not mapped in 'curenv'. */
+	if (srcva != 0) {
+		p = page_lookup(cpu_curenv()->env_pgdir, srcva, NULL);
+		if (p == NULL) {
+			spin_lock(&env_sched_lock);
+			e->env_ipc_recving = 1;
+			spin_unlock(&env_sched_lock);
+			return -E_INVAL;
+		}
+		if ((r = page_insert(e->env_pgdir, e->env_asid, p, e->env_ipc_dstva, perm)) < 0) {
+			spin_lock(&env_sched_lock);
+			e->env_ipc_recving = 1;
+			spin_unlock(&env_sched_lock);
+			return r;
+		}
+		ipc_perm = PTE_V | perm;
+	}
+
+	/* Step 5: Set the target's ipc fields. */
 	e->env_ipc_value = value;
 	e->env_ipc_from = cpu_curenv()->env_id;
-	e->env_ipc_perm = PTE_V | perm;
-	e->env_ipc_recving = 0;
+	e->env_ipc_perm = ipc_perm;
 
-	/* Step 5: Set the target's status to 'ENV_RUNNABLE' again and insert it to the tail of
+	/* Step 6: Set the target's status to 'ENV_RUNNABLE' again and insert it to the tail of
 	 * 'env_sched_list'.
-	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 的并发修改。 */
-	/* Exercise 4.8: Your code here. (7/8) */
+	 * SMP 阶段 6: 持 env_sched_lock 保护 env_sched_list 的并发修改。
+	 * 必须在共享页映射完成后再唤醒目标 env，避免另一个 CPU 抢先运行接收方。 */
 	spin_lock(&env_sched_lock);
 	e->env_status = ENV_RUNNABLE;
 	TAILQ_INSERT_TAIL(&env_sched_list, e, env_sched_link);
 	spin_unlock(&env_sched_lock);
 
-	/* Step 6: If 'srcva' is not zero, map the page at 'srcva' in 'curenv' to 'e->env_ipc_dstva'
-	 * in 'e'. */
-	/* Return -E_INVAL if 'srcva' is not zero and not mapped in 'curenv'. */
-	if (srcva != 0) {
-		/* Exercise 4.8: Your code here. (8/8) */
-		p = page_lookup(cpu_curenv()->env_pgdir, srcva, NULL);
-		if (p == NULL) {
-			return -E_INVAL;
-		}
-		try(page_insert(e->env_pgdir, e->env_asid, p, e->env_ipc_dstva, perm));
-	}
 	return 0;
 }
 
-// XXX: kernel does busy waiting here, blocking all envs
-/* TODO SMP phase 7: sys_cgetc 忙等会让单核独占，应在等待时 schedule(1)。 */
 int sys_cgetc(void) {
-	int ch;
-	while ((ch = scancharc()) == 0) {
-	}
-	return ch;
+	return scancharc();
 }
 
 /* Overview:

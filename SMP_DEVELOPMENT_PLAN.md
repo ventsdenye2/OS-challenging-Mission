@@ -653,3 +653,45 @@ make test lab=6_2
 7. `sched: run environments on multiple cpus`
 8. `fs: pin file server and protect device access`
 9. `docs: record smp implementation and test results`
+
+## 8. 最终实现与测试记录
+
+### 锁设计
+
+- `console_lock` 保护串口输出，避免多核 `printk` 交错。
+- `env_sched_lock` 保护 `env_sched_list`、`env_running`、`env_cpu_id` 和 IPC 阻塞/唤醒状态。
+- `pmap_lock` 保护 `page_free_list`、页表项和 `pp_ref`；TLB shootdown 在释放页表锁后执行，避免 IPI 等待时死锁。
+- `asid_lock` 保护 ASID bitmap 分配和释放。
+
+### IPI mailbox
+
+- 默认 QEMU `24Kc` Malta 环境未提供任务文档中的 IPI MMIO 块，因此当前实现使用共享内存 mailbox 模拟同一协议。
+- mailbox slot 0 保存函数指针，slot 1/2 保存两个参数；`IPI_CALL` 触发远端执行，`ipi_done[cpu]` 用于同步等待。
+- 调度入口、timer 路径和从核早期等待路径都会处理 pending IPI，保证 TLB shootdown 等远端调用不会被用户态执行长期饿死。
+
+### 调度策略
+
+- 每个 CPU 使用 `cpu_data[cpu_id()].sched_count` 作为独立时间片。
+- 调度器持 `env_sched_lock` 遍历 runnable 队列，跳过正在其他 CPU 上运行的 env，防止同一 env 被双核运行。
+- CPU1 初始化完成后先处理早期 IPI，等 CPU0 首次进入调度路径后直接进入 `schedule(0)`；timer interrupt 后续继续触发抢占调度。
+- `env_pinned_cpu` 支持 CPU 绑定；`fs_serv` 固定在 CPU0，普通用户进程不绑定，可在两个 CPU 上调度。
+
+### FS 与 shell 策略
+
+- 文件系统服务端固定 CPU0 运行，保持 block cache、bitmap、open table 和 IDE PIO 的单服务者语义。
+- 其他 CPU 上的用户进程通过 IPC 请求 FS 服务；IPC 发送先完成共享页映射，再将接收方放回 runnable 队列，避免接收方抢先看到半完成请求。
+- `sys_cgetc` 保持非阻塞读取，用户态 console read 在无输入时 `yield`，避免 shell 等待输入时独占 CPU。
+
+### 测试结果
+
+已在 2 核 QEMU Malta (`-smp 2 -cpu 24Kc -m 64 -nographic -M malta -no-reboot`) 下完成以下验证：
+
+- `make -s test lab=1_2`
+- `make -s test lab=2_1`、`2_2`、`2_3`
+- `make -s test lab=3_1`、`3_2`、`3_3`、`3_4`
+- `make -s test lab=4_1` 到 `4_7`
+- `make -s test lab=5_1` 到 `5_5`
+- `make -s test lab=6_1`、`6_2`
+- `make -s all`
+- 默认 `make run` 输出 `[1] slave online`，并完成 100 次 IPI 调用测试：`cpu1 seen = 42 count = 100`。
+- `lab=6_2` shell 手工测试通过：`ls`、`cat motd`、`cat script`、`sh testshell.sh` 均可执行并输出预期内容。

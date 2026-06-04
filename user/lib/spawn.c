@@ -55,8 +55,7 @@ int init_stack(u_int child, char **argv, u_int *init_sp) {
 	}
 
 	// Set args[argc] to 0 to null-terminate the args array.
-	ctemp--;
-	args[argc] = (u_int)ctemp;
+	args[argc] = 0;
 
 	// Push two more words onto the child's stack below 'args',
 	// containing the argc and argv parameters to be passed
@@ -112,7 +111,21 @@ int spawn(char *prog, char **argv) {
 	// Return the error if 'open' fails.
 	int fd;
 	if ((fd = open(prog, O_RDONLY)) < 0) {
-		return fd;
+		if (fd == -E_NOT_FOUND) {
+			char binprog[MAXPATHLEN];
+			size_t len = strlen(prog);
+			if (len + 2 >= MAXPATHLEN) {
+				return -E_BAD_PATH;
+			}
+			strcpy(binprog, prog);
+			binprog[len] = '.';
+			binprog[len + 1] = 'b';
+			binprog[len + 2] = 0;
+			fd = open(binprog, O_RDONLY);
+		}
+		if (fd < 0) {
+			return fd;
+		}
 	}
 
 	// Step 2: Read the ELF header (of type 'Elf32_Ehdr') from the file into 'elfbuf' using

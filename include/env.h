@@ -43,9 +43,7 @@ struct Env {
 	// SMP: 多核调度字段（阶段 2 添加，阶段 3+ 启用）
 	int env_cpu_id;	 // 当前运行该 env 的 CPU 编号，-1 表示未在任何 CPU 运行
 	int env_running; // 是否正在某个 CPU 上运行（防止双重调度）
-
-	/* TODO SMP phase 7: 增加以下字段支持 CPU 绑定。
-	 *   int env_pinned_cpu;   // -1 表示不绑定，>=0 表示绑定到指定 CPU */
+	int env_pinned_cpu; // -1 表示不绑定，>=0 表示只能由指定 CPU 调度
 };
 
 LIST_HEAD(Env_list, Env);
@@ -57,6 +55,7 @@ void env_init(void);
 int env_alloc(struct Env **e, u_int parent_id);
 void env_free(struct Env *);
 struct Env *env_create(const void *binary, size_t size, int priority);
+struct Env *env_create_named(const char *name, const void *binary, size_t size, int priority);
 void env_destroy(struct Env *e);
 
 int envid2env(u_int envid, struct Env **penv, int checkperm);
@@ -69,14 +68,14 @@ void envid2env_check(void);
 	({                                                                                         \
 		extern u_char binary_##x##_start[];                                                \
 		extern u_int binary_##x##_size;                                                    \
-		env_create(binary_##x##_start, (u_int)binary_##x##_size, y);                       \
+		env_create_named(#x, binary_##x##_start, (u_int)binary_##x##_size, y);             \
 	})
 
 #define ENV_CREATE(x)                                                                              \
 	({                                                                                         \
 		extern u_char binary_##x##_start[];                                                \
 		extern u_int binary_##x##_size;                                                    \
-		env_create(binary_##x##_start, (u_int)binary_##x##_size, 1);                       \
+		env_create_named(#x, binary_##x##_start, (u_int)binary_##x##_size, 1);             \
 	})
 
 #endif // !_ENV_H_

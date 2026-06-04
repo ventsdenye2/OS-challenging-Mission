@@ -2,8 +2,8 @@
  * operations on IDE disk.
  */
 
-/* TODO SMP phase 7: IDE PIO 读写需 ide_lock 保护，
- * 防止多核同时访问 IDE 寄存器造成数据错乱。 */
+/* SMP FS 策略：
+ * IDE PIO 只由固定在 CPU0 的 fs_serv 访问，避免多个 CPU 同时操作 IDE 寄存器。 */
 
 #include "serv.h"
 #include <lib.h>

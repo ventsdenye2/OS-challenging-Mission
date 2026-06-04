@@ -31,6 +31,7 @@ void schedule(int yield) {
 	int count = cpu_data[cpu].sched_count;
 	struct Env *e = cpu_curenv();
 
+	handle_ipi_irq();
 	smp_note_schedule_ready();
 
 	spin_lock(&env_sched_lock);
@@ -69,7 +70,8 @@ void schedule(int yield) {
 		while (1) {
 			e = TAILQ_FIRST(&env_sched_list);
 			while (e != NULL) {
-				if (e->env_running == 0 || e->env_cpu_id == cpu) {
+				if ((e->env_pinned_cpu < 0 || e->env_pinned_cpu == cpu) &&
+				    (e->env_running == 0 || e->env_cpu_id == cpu)) {
 					goto found;
 				}
 				e = TAILQ_NEXT(e, env_sched_link);
@@ -77,6 +79,7 @@ void schedule(int yield) {
 			/* No runnable env available for this CPU.
 			 * Release lock briefly to let other CPUs make progress. */
 			spin_unlock(&env_sched_lock);
+			handle_ipi_irq();
 			for (int i = 0; i < 100; i++) {
 				__asm__ volatile("nop");
 			}

@@ -2,9 +2,9 @@
 #include <mmu.h>
 #include <smp.h>
 
-/* TODO SMP phase 7:
- * - block cache / bitmap / file metadata 修改需加锁。
- * - 若 FS 仅 CPU0 运行，锁仍建议保留防止 syscall/dev 直接访问。 */
+/* SMP FS 策略：
+ * 文件系统服务进程固定在 CPU0 运行，因此 block cache、bitmap 和文件元数据
+ * 由单个 FS 服务端串行修改；其他用户进程通过 IPC 请求 FS 服务。 */
 
 struct Super *super;
 

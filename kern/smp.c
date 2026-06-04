@@ -188,8 +188,22 @@ void smp_secondary_start(void) {
 	smp_sync();
 	printk("slave online\n");
 
-	/* SMP 阶段 6: 从核初始化完成后等待 timer 中断触发调度。
-	 * IPI 在中断上下文中处理；调度由 handle_timer_irq 驱动。 */
+	/* SMP 阶段 6: 从核初始化完成后继续处理早期 IPI，等 CPU0 建好调度队列并
+	 * 首次进入 schedule() 后，CPU1 也直接进入 schedule(0)。后续 timer interrupt
+	 * 会继续通过 handle_timer_irq 触发抢占调度。 */
+#if !defined(LAB) || LAB >= 3
+	while (!timer_schedule_ready) {
+		if (ipi_pending[cpu] != 0) {
+			handle_ipi_irq();
+		}
+#if SMP_USE_MMIO_IPI
+		__asm__ volatile("wait");
+#else
+		__asm__ volatile("nop");
+#endif
+	}
+	schedule(0);
+#else
 	while (1) {
 		if (ipi_pending[cpu] != 0) {
 			handle_ipi_irq();
@@ -200,6 +214,7 @@ void smp_secondary_start(void) {
 		__asm__ volatile("nop");
 #endif
 	}
+#endif
 }
 
 void smp_group_function_call(void (*fn)(u_int, u_int), u_int arg0, u_int arg1) {
@@ -234,6 +249,7 @@ void smp_note_schedule_ready(void) {
 }
 
 void handle_timer_irq(void) {
+	handle_ipi_irq();
 #if !defined(LAB) || LAB >= 3
 	/* SMP 阶段 6: 所有 CPU 的 timer 中断都触发调度。 */
 	if (timer_schedule_ready) {
