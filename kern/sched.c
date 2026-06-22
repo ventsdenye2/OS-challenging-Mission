@@ -32,6 +32,7 @@ void schedule(int yield) {
 	struct Env *e = cpu_curenv();
 
 	handle_ipi_irq();
+	env_check_kill_pending();
 	smp_note_schedule_ready();
 
 	spin_lock(&env_sched_lock);
@@ -71,6 +72,7 @@ void schedule(int yield) {
 			e = TAILQ_FIRST(&env_sched_list);
 			while (e != NULL) {
 				if ((e->env_pinned_cpu < 0 || e->env_pinned_cpu == cpu) &&
+				    !e->env_kill_pending &&
 				    (e->env_running == 0 || e->env_cpu_id == cpu)) {
 					goto found;
 				}

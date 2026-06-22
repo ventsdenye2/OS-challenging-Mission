@@ -44,6 +44,8 @@ struct Env {
 	int env_cpu_id;	 // 当前运行该 env 的 CPU 编号，-1 表示未在任何 CPU 运行
 	int env_running; // 是否正在某个 CPU 上运行（防止双重调度）
 	int env_pinned_cpu; // -1 表示不绑定，>=0 表示只能由指定 CPU 调度
+	int env_kill_pending; // 远程销毁请求，目标 CPU 在安全点本地释放
+	volatile int env_kill_done; // 远程销毁完成通知
 };
 
 LIST_HEAD(Env_list, Env);
@@ -57,6 +59,7 @@ void env_free(struct Env *);
 struct Env *env_create(const void *binary, size_t size, int priority);
 struct Env *env_create_named(const char *name, const void *binary, size_t size, int priority);
 void env_destroy(struct Env *e);
+void env_check_kill_pending(void);
 
 int envid2env(u_int envid, struct Env **penv, int checkperm);
 void env_run(struct Env *e) __attribute__((noreturn));

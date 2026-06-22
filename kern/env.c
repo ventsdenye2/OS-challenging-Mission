@@ -177,6 +177,8 @@ void env_init(void) {
 		envs[i].env_cpu_id = -1;
 		envs[i].env_running = 0;
 		envs[i].env_pinned_cpu = -1;
+		envs[i].env_kill_pending = 0;
+		envs[i].env_kill_done = 0;
 		LIST_INSERT_HEAD(&env_free_list, &envs[i], env_link);
 	}
 
@@ -282,6 +284,7 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	e->env_cpu_id = -1;	       // SMP: not assigned to any CPU yet
 	e->env_running = 0;	       // SMP: not currently running
 	e->env_pinned_cpu = -1;	       // SMP: not pinned to any CPU by default
+	e->env_kill_pending = 0;       // SMP: no remote destroy request
 	/* Exercise 3.4: Your code here. (3/4) */
 	if ((r = asid_alloc(&e->env_asid)) != 0) {
 		return r;
@@ -467,22 +470,84 @@ void env_free(struct Env *e) {
 	e->env_running = 0;
 	e->env_cpu_id = -1;
 	e->env_pinned_cpu = -1;
+	e->env_kill_pending = 0;
+	e->env_kill_done = 1;
 	LIST_INSERT_HEAD((&env_free_list), (e), env_link);
 	spin_unlock(&env_sched_lock);
+}
+
+static void env_remote_kill_poke(u_int envid, u_int unused) {
+	(void)envid;
+	(void)unused;
+}
+
+static u_int env_irq_save(void) {
+	u_int status;
+
+	__asm__ volatile("mfc0 %0, $12" : "=r"(status));
+	__asm__ volatile("mtc0 %0, $12" : : "r"(status & ~STATUS_IE) : "memory");
+	return status;
+}
+
+static void env_irq_restore(u_int status) {
+	__asm__ volatile("mtc0 %0, $12" : : "r"(status) : "memory");
+}
+
+static void env_wait_remote_destroy(struct Env *e, u_int envid) {
+	u_int status = env_irq_save();
+
+	smp_group_function_call(env_remote_kill_poke, envid, 0);
+	while (e->env_id == envid && !e->env_kill_done) {
+		handle_ipi_irq();
+		__asm__ volatile("nop");
+	}
+	env_irq_restore(status);
+}
+
+void env_check_kill_pending(void) {
+	struct Env *e = cpu_curenv();
+
+	if (e == NULL || !e->env_kill_pending) {
+		return;
+	}
+
+	env_free(e);
+	cpu_data[cpu_id()].curenv = NULL;
+	printk("i am killed remotely ... \n");
+	schedule(1);
 }
 
 /* Overview:
  *  Free env e, and schedule to run a new env if e is the current env.
  *
- *  SMP 阶段 6:
- *  - 如果 e 正在其他 CPU 上运行，panic（v1 简化策略），后续可用 IPI 优雅处理。
+ *  SMP:
+ *  - 如果 e 正在其他 CPU 上运行，只标记远程销毁请求并等待目标 CPU 本地释放。
  *  - env_free 内部已持 env_sched_lock 处理调度队列的并发访问。
  */
 void env_destroy(struct Env *e) {
-	/* SMP: 如果 e 正在其他 CPU 上运行，不能安全销毁。 */
-	if (e->env_running && e->env_cpu_id != cpu_id()) {
-		panic("env_destroy: env %08x running on CPU %d, cannot destroy from CPU %d\n",
-		      e->env_id, e->env_cpu_id, cpu_id());
+	u_int envid;
+	int already_free = 0;
+	int remote_running = 0;
+
+	spin_lock(&env_sched_lock);
+	if (e->env_status == ENV_FREE) {
+		already_free = 1;
+	} else if (e->env_running && e->env_cpu_id != cpu_id()) {
+		e->env_kill_pending = 1;
+		e->env_kill_done = 0;
+		envid = e->env_id;
+		remote_running = 1;
+	} else {
+		e->env_kill_pending = 1;
+	}
+	spin_unlock(&env_sched_lock);
+
+	if (already_free) {
+		return;
+	}
+	if (remote_running) {
+		env_wait_remote_destroy(e, envid);
+		return;
 	}
 
 	/* Hint: free e. */
