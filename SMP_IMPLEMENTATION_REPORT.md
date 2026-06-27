@@ -1,7 +1,5 @@
 # MOS SMP 多核移植实现报告
 
-本文依据 `task.md` 中提出的 SMP 移植目标整理当前实现。报告重点说明每一项要求在当前代码中的实现逻辑、与教程建议路径不同的地方，以及测试和调试中发现问题后做出的调整。
-
 ## 1. 任务目标与实现概览
 
 `task.md` 要求基于 MIPS R24K/QEMU Malta 将单核 MOS 扩展为 SMP 内核，核心目标包括：
@@ -597,15 +595,3 @@ cat motd
 cat script
 sh testshell.sh
 ```
-
-## 13. 当前限制与后续优化方向
-
-当前实现满足任务核心要求，但仍有若干可优化点：
-
-- 默认 IPI 是共享内存模拟，不是本地 QEMU 上的真实 MMIO IPI。
-- 从核启动没有使用 `IPI_START` mailbox，而是使用 `smp_boot_ready` 启动栅栏。
-- 页表锁是全局粗粒度锁，性能不如细粒度锁或 CAS 管理。
-- `env_free()` 逐页 TLB shootdown，释放大地址空间时 IPI 次数较多。
-- 文件系统采用 `fs_serv` 固定 CPU0 的保守策略，没有实现多核并行文件系统。
-- `halt.b` 在部分 QEMU/Malta 环境中可能进入 panic/halt 路径后停在内核死循环，实际退出 QEMU 更可靠的方法是 monitor `quit` 或 `Ctrl-A x`。
-
