@@ -61,20 +61,6 @@ rg -n "QEMU_FLAGS|MALTA|SERIAL|IDE" Makefile include/malta.h
 timeout 12s make run
 ```
 
-### Q4: 使用 Rust 开发时，原子汇编和链接脚本如何与 C 规范对齐？
-
-答题要点：
-
-- 必须保证 ABI 一致：函数参数仍按 MIPS 调用约定从 `$a0-$a3` 传入，返回值从 `$v0` 返回。
-- 汇编符号名、入口 `_start`、链接地址、段布局、BSS 清零方式要和内核启动预期一致。
-- `extern "C"`、`global_asm!` 或单独汇编文件要避免 Rust 名字改编。
-- 原子操作要显式使用 `ll/sc/sync` 或 Rust 内联汇编，并注意 clobber、`volatile`、memory ordering。
-
-可直接运行当前 C/汇编实现的对照检查：
-
-```bash
-rg -n "LEAF\\(atomic_|LEAF\\(spin_|ENTRY\\(_start\\)|LDFLAGS|CFLAGS" kern/spinlock.S init/start.S include.mk kernel.lds
-```
 
 ### Q5: 怎么证明不是“只有 CPU0 在跑”，而是两个 CPU 都真正参与了？
 
@@ -97,19 +83,6 @@ timeout 20s make run
 smp_sched_parallel passed: total=... cpu0=... cpu1=...
 ```
 
-### Q6: 如果换成大端 `qemu-system-mips` 或小端 `qemu-system-mipsel`，要注意什么？
-
-答题要点：
-
-- 工具链、QEMU 目标、镜像格式和代码假设的端序必须一致。
-- 如果编译器生成小端 MIPS ELF，却用大端 QEMU 运行，启动和设备访问都可能异常。
-- 答辩时应说明本项目固定使用哪一套工具链和 QEMU 目标，并用 Makefile 参数作为依据。
-
-可直接运行：
-
-```bash
-rg -n "ENDIAN|qemu-system-mips|CROSS_COMPILE|HOST_ENDIAN" include.mk README.md
-```
 
 ## 2. 启动、寄存器与 Per-CPU 状态
 
@@ -241,19 +214,6 @@ rg -n "exc_gen_entry|CP0_EBASE|KSTACKTOP|SAVE_ALL|\\.align|ALIGN" kern/genex.S i
 rg -n "SAVE_ALL|CP0_EBASE|KSTACKTOP|KSTACKSHIFT|cpu_trapframe" include/stackframe.h kern/genex.S kern/smp.c
 ```
 
-### Q16: 如果用 `$gp` 作为 per-CPU 指针，原来的保存恢复 `$gp` 逻辑要不要改？
-
-答题要点：
-
-- 要。因为 `$gp` 从 ABI 全局指针变成 per-CPU 指针后，它不再只是普通用户上下文寄存器。
-- 异常入口、上下文切换、用户态 trapframe 保存恢复必须明确区分“内核 per-CPU `$gp`”和“用户态 `$gp`”。
-- 当前项目没有用 `$gp` 保存 per-CPU 指针，而是通过 `cpu_id()` 和 `cpu_data` 规避这类 ABI 风险。
-
-可直接运行：
-
-```bash
-rg -n "\\$28|gp|cpu_data|cpu_id\\(" include kern init user/lib/entry.S
-```
 
 ## 3. 原子操作、锁与同步
 
